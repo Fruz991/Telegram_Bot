@@ -11,6 +11,7 @@ socket.getaddrinfo = getaddrinfo_ipv4
 import os
 import asyncio
 from aiogram import Bot, Dispatcher, types
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import Command
 from dotenv import load_dotenv
@@ -43,20 +44,7 @@ dp = Dispatcher()
 # ----------------------
 # Обработчик /start
 # ----------------------
-@dp.message(Command("start"))
-async def start(message: types.Message):
-    global OWNER_ID
-    user_id = message.from_user.id
 
-    print(f"Получено сообщение от: {user_id}")  # debug в терминал
-
-    if OWNER_ID is None:
-      OWNER_ID = user_id
-      with open('.env', 'a') as f:
-          f.write(f'/nOWNER_ID={user_id}')
-      await message.answer (f"Вітаємо владелец от {user_id} 👑 debug 👑 термінал")
-    elif user_id != OWNER_ID:      
-      await message.answer ("У меня уже есть владелец")
 
 # ----------------------
 # main для запуска polling
@@ -119,6 +107,19 @@ symbols = [
 ]
 
 timeframes = ['15m','30m','1h']
+
+def signal_keyboard():
+    """Создает клавиатуру c одной кнопкой"""
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    keyboard.add(
+        InlineKeyboardButton(
+            text="📊 Получить сигнал",
+            callback_data="get_best_signal"
+        )
+    )
+    return keyboard
+    
+            
 
 # cooldown защита от спама
 signal_cooldown = {}
@@ -262,12 +263,52 @@ def analyze_all_timeframes(symbol):
 # =====================================================
 # TELEGRAM КОМАНДЫ
 # =====================================================
-
 @dp.message_handler(commands=['start'])
-async def start(message: types.Message):
+async def send_start(message: types.Message):
+    """Показывает кнопку при старте"""
+    keyboard = signal_keyboard()
     await message.reply(
-        "Привет! Используй /signal для поиска сделки."
+        "👋 Привет! Нажми кнопку, чтобы получить лучший торговый сигнал:",
+        reply_markup=keyboard
     )
+
+@dp.callback_query_handler(lambda c: c.data == 'get_best_signal')
+async def send_best_signal(callback: types.CallbackQuery):
+    """Отправляет лучший сигнал из всех криптовалют"""
+    await callback.answer("Анализирую рынок...")
+    
+    now = time.time()
+    
+    best_signal = None
+    best_score = -999
+    
+    # Проверяем все криптовалюты
+    for symbol in symbols:
+        if symbol in signal_cooldown:
+            if now - signal_cooldown[symbol] < COOLDOWN_SECONDS:
+                continue
+        
+        signal = await analyze_all_timeframes(symbol)
+        
+        if signal['side'] != "NO SIGNAL":
+            # Считаем "силу" сигнала
+            score = 0
+            if signal['entry'] == '🟢': score += 3
+            if signal['sl'] == '🟢': score += 2
+            if signal['tp1'] == '🟢': score += 1
+            if signal['tp2'] == '🟢': score += 1
+            if signal['tp3'] == '🟢': score += 1
+            
+            if score > best_score:
+                best_score = score
+                best_signal = signal
+                best_signal['symbol'] = symbol
+    
+    if best_signal:
+        signal_cooldown[best_signal['symbol']] = now
+        await callback.message.reply(best_signal['text'])
+    else:
+        await callback.message.reply("⏳ Сейчас нет сильных сигналов. Попробуйте позже.")
 
 @dp.message_handler(commands=['signal'])
 async def send_signal(message: types.Message):
