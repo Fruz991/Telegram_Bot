@@ -51,15 +51,12 @@ async def start(message: types.Message):
     print(f"Получено сообщение от: {user_id}")  # debug в терминал
 
     if OWNER_ID is None:
-        OWNER_ID = user_id
-        with open(".env", "a") as f:
-            f.write(f"\nOWNER_ID={OWNER_ID}")
-        await message.answer("✅ Ты записан как владелец!")
-        print(f"OWNER_ID записан: {OWNER_ID}")
-        return
-
-    if user_id == OWNER_ID:
-        await message.answer("👑 Привет, владелец!")
+      OWNER_ID = user_id
+      with open('.env', 'a') as f:
+          f.write(f'/nOWNER_ID={user_id}')
+      await message.answer (f"Вітаємо владелец от {user_id} 👑 debug 👑 термінал")
+    elif user_id != OWNER_ID:      
+      await message.answer ("У меня уже есть владелец")
 
 # ----------------------
 # main для запуска polling
