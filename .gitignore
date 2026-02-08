@@ -1,0 +1,7 @@
+*.exe
+*.rar
+*.ini
+__pycache__/
+*.pyc
+.vscode/
+venv/
