@@ -1,6 +1,6 @@
-aiogram==3.15.0
-python-dotenv==1.0.1
-ccxt==4.2.25
-ta==0.11.0
-pandas==2.1.4
-aiohttp==3.9.1
+aiogram>=3.0
+python-dotenv
+ccxt
+pandas<2.0
+ta
+aiohttp
