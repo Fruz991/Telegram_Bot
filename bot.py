@@ -139,29 +139,21 @@ class TradeTracker:
 tracker = TradeTracker()
 
 # =====================================================
-# MIDDLEWARE ДЛЯ ПРОВЕРКИ ДОСТУПА
+# ПРОВЕРКА ДОСТУПА
 # =====================================================
-def access_check(func):
-    """Декоратор для проверки доступа только владельцу"""
-    async def wrapper(message_or_callback, *args, **kwargs):
-        user_id = None
-        
-        if isinstance(message_or_callback, types.Message):
-            user_id = message_or_callback.from_user.id
-        elif isinstance(message_or_callback, types.CallbackQuery):
-            user_id = message_or_callback.from_user.id
-        
-        if user_id != OWNER_ID:
-            # Отправляем сообщение о тех. обслуживании
-            if isinstance(message_or_callback, types.Message):
-                await message_or_callback.reply("⚠️ На данный момент бот находится в Техническом Обслуживании")
-            elif isinstance(message_or_callback, types.CallbackQuery):
-                await message_or_callback.answer("⚠️ Бот на обслуживании", show_alert=True)
-            return
-        
-        return await func(message_or_callback, *args, **kwargs)
-    
-    return wrapper
+async def check_access_message(message: types.Message) -> bool:
+    """Проверяет доступ для Message. Возвращает True если доступ разрешен."""
+    if message.from_user.id != OWNER_ID:
+        await message.reply("⚠️ На данный момент бот находится в Техническом Обслуживании")
+        return False
+    return True
+
+async def check_access_callback(callback: types.CallbackQuery) -> bool:
+    """Проверяет доступ для CallbackQuery. Возвращает True если доступ разрешен."""
+    if callback.from_user.id != OWNER_ID:
+        await callback.answer("⚠️ Бот на обслуживании", show_alert=True)
+        return False
+    return True
 
 # =====================================================
 # КЛАВИАТУРА
@@ -305,7 +297,7 @@ def analyze_symbol(symbol, timeframe):
 # =====================================================
 async def analyze_all_timeframes_async(symbol):
     """Асинхронный анализ всех таймфреймов для ускорения"""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     
     # Запускаем анализ всех таймфреймов параллельно
     tasks = [loop.run_in_executor(None, analyze_symbol, symbol, tf) for tf in timeframes]
@@ -381,8 +373,10 @@ TP1 {tp1_status} TP2 {tp2_status} TP3 {tp3_status}
 # КОМАНДЫ
 # =====================================================
 @dp.message(Command("start"))
-@access_check
 async def send_start(message: types.Message):
+    if not await check_access_message(message):
+        return
+    
     keyboard = signal_keyboard()
     stops_count = tracker.get_stops_count()
     
@@ -394,8 +388,10 @@ async def send_start(message: types.Message):
     )
 
 @dp.callback_query(F.data == "get_best_signal")
-@access_check
 async def send_best_signal(callback: types.CallbackQuery):
+    if not await check_access_callback(callback):
+        return
+    
     # Проверка лимита стопов
     if not tracker.can_trade():
         await callback.answer("🚫 Лимит на сегодня достигнут. Иди отдыхай.", show_alert=True)
@@ -425,8 +421,10 @@ async def send_best_signal(callback: types.CallbackQuery):
         await callback.message.answer("⏳ Сейчас нет сильных сигналов. Попробуйте позже.")
 
 @dp.callback_query(F.data == "trade_report")
-@access_check
 async def show_trade_report_menu(callback: types.CallbackQuery):
+    if not await check_access_callback(callback):
+        return
+    
     keyboard = trade_report_keyboard()
     await callback.message.answer(
         "Как завершилась сделка?",
@@ -435,8 +433,10 @@ async def show_trade_report_menu(callback: types.CallbackQuery):
     await callback.answer()
 
 @dp.callback_query(F.data == "report_profit")
-@access_check
 async def report_profit(callback: types.CallbackQuery):
+    if not await check_access_callback(callback):
+        return
+    
     # Пример отчета о профитной сделке
     report = format_trade_report(
         symbol="BTCUSDT",
@@ -452,8 +452,10 @@ async def report_profit(callback: types.CallbackQuery):
     await callback.answer("✅ Отчет сохранен")
 
 @dp.callback_query(F.data == "report_stop")
-@access_check
 async def report_stop(callback: types.CallbackQuery):
+    if not await check_access_callback(callback):
+        return
+    
     # Добавляем стоп в счетчик
     tracker.add_stop()
     stops_count = tracker.get_stops_count()
@@ -477,8 +479,10 @@ async def report_stop(callback: types.CallbackQuery):
     await callback.answer(f"❌ Стоп #{stops_count}/3")
 
 @dp.callback_query(F.data == "back_main")
-@access_check
 async def back_to_main(callback: types.CallbackQuery):
+    if not await check_access_callback(callback):
+        return
+    
     keyboard = signal_keyboard()
     await callback.message.answer(
         "Главное меню:",
@@ -487,8 +491,10 @@ async def back_to_main(callback: types.CallbackQuery):
     await callback.answer()
 
 @dp.message(Command("signal"))
-@access_check
 async def send_signal(message: types.Message):
+    if not await check_access_message(message):
+        return
+    
     # Проверка лимита стопов
     if not tracker.can_trade():
         await message.reply("🚫 Лимит на сегодня достигнут. Иди отдыхай.")
@@ -512,8 +518,10 @@ async def send_signal(message: types.Message):
     await message.reply("⏳ Сигналов сейчас нет.")
 
 @dp.message(Command("stats"))
-@access_check
 async def show_stats(message: types.Message):
+    if not await check_access_message(message):
+        return
+    
     """Показывает статистику стопов за день"""
     stops_count = tracker.get_stops_count()
     can_trade = tracker.can_trade()
@@ -557,8 +565,11 @@ async def auto_scan():
 async def main():
     print("Бот запущен и ждёт сообщений...")
     print(f"Разрешен доступ только для ID: {OWNER_ID}")
-    asyncio.create_task(auto_scan())
-    await dp.start_polling(bot)
+    task = asyncio.create_task(auto_scan())
+    try:
+        await dp.start_polling(bot)
+    finally:
+        task.cancel()
 
 if __name__ == "__main__":
     asyncio.run(main())
