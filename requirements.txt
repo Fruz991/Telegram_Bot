@@ -1,6 +1,5 @@
-aiogram>=3.0
+aiogram
 python-dotenv
 ccxt
-pandas<2.0
+pandas
 ta
-aiohttp
