@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 
 from config import SYMBOLS, COOLDOWN_SECONDS
 from tracker import tracker
-from keyboards import signal_keyboard, trade_report_keyboard
-from analytics import analyze_all_timeframes_async, format_signal, format_trade_report
+from keyboards import signal_keyboard
+from analytics import analyze_all_timeframes_async, format_signal
 
 # =====================================================
 # ЗАГРУЗКА ТОКЕНОВ
@@ -133,48 +133,6 @@ async def send_best_signal(callback: types.CallbackQuery):
             return
 
     await callback.message.answer("⏳ Сейчас нет сильных сигналов. Попробуйте позже.")
-
-
-@dp.callback_query(F.data == "trade_report")
-async def show_trade_report_menu(callback: types.CallbackQuery):
-    if not await check_access_callback(callback):
-        return
-
-    await callback.message.answer("Как завершилась сделка?", reply_markup=trade_report_keyboard())
-    await callback.answer()
-
-
-@dp.callback_query(F.data == "report_profit")
-async def report_profit(callback: types.CallbackQuery):
-    if not await check_access_callback(callback):
-        return
-
-    report = format_trade_report(
-        symbol="BTCUSDT", result_r=2.4,
-        tp1=True, tp2=True, tp3=False,
-        exit_reason="трейлинг", comment="поздно перевёл SL"
-    )
-    await callback.message.answer(report)
-    await callback.answer("✅ Отчет сохранен")
-
-
-@dp.callback_query(F.data == "report_stop")
-async def report_stop(callback: types.CallbackQuery):
-    if not await check_access_callback(callback):
-        return
-
-    tracker.add_stop()
-    stops_count = tracker.get_stops_count()
-
-    report = format_trade_report(
-        symbol="ETHUSDT", result_r=-1.0,
-        tp1=False, tp2=False, tp3=False,
-        exit_reason="стоп-лосс", comment="не дождался отката"
-    )
-
-    warning = "\n\n🚫 Лимит стопов достигнут! Отдохни сегодня." if stops_count >= 3 else ""
-    await callback.message.answer(report + warning)
-    await callback.answer(f"❌ Стоп #{stops_count}/3")
 
 
 @dp.callback_query(F.data == "back_main")

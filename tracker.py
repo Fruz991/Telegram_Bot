@@ -46,19 +46,5 @@ class TradeTracker:
     def can_trade(self):
         return self.get_stops_count() < 3
 
-    def add_trade_report(self, symbol, side, result, tps_hit, exit_reason, comment=""):
-        trade_report = {
-            "date": str(datetime.now()),
-            "symbol": symbol,
-            "side": side,
-            "result": result,
-            "tps_hit": tps_hit,
-            "exit_reason": exit_reason,
-            "comment": comment
-        }
-        self.trades["history"].append(trade_report)
-        self.save_trades()
-        return trade_report
-
 
 tracker = TradeTracker()
