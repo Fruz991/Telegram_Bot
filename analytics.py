@@ -51,7 +51,7 @@ def build_advanced_trade_plan(price, atr, side):
         tp1 = price + (risk * 1.5)
         tp2 = price + (risk * 2.0)
         tp3 = price + (risk * 3.0)
-    else:  # SHORT
+    else:
         entry_min = price - (atr * 0.2)
         entry_max = price + (atr * 0.2)
         stop_loss = price + risk
@@ -68,7 +68,6 @@ def build_advanced_trade_plan(price, atr, side):
         "tp1": tp1,
         "tp2": tp2,
         "tp3": tp3,
-        "risk_reward_ratio": "1:2 - 1:3"
     }
 
 
@@ -76,23 +75,19 @@ def build_advanced_trade_plan(price, atr, side):
 # УРОВНИ ПОДДЕРЖКИ И СОПРОТИВЛЕНИЯ
 # =====================================================
 def find_support_resistance(df, window=10, num_levels=3):
-    """Находит ключевые уровни поддержки и сопротивления"""
     highs = df['high'].values
     lows = df['low'].values
     levels = []
 
     for i in range(window, len(df) - window):
-        # Локальный максимум (сопротивление)
         if highs[i] == max(highs[i - window:i + window]):
             levels.append(("resistance", highs[i]))
-        # Локальный минимум (поддержка)
         if lows[i] == min(lows[i - window:i + window]):
             levels.append(("support", lows[i]))
 
-    # Кластеризуем близкие уровни
     clustered = []
     used = set()
-    price_range = (df['high'].max() - df['low'].min()) * 0.01  # 1% диапазон
+    price_range = (df['high'].max() - df['low'].min()) * 0.01
 
     for i, (type1, price1) in enumerate(levels):
         if i in used:
@@ -106,10 +101,9 @@ def find_support_resistance(df, window=10, num_levels=3):
         avg_price = sum(cluster) / len(cluster)
         clustered.append((type1, avg_price, len(cluster)))
 
-    # Сортируем по силе уровня (количество касаний)
     clustered.sort(key=lambda x: x[2], reverse=True)
-
     current_price = df['close'].iloc[-1]
+
     supports = sorted(
         [(t, p) for t, p, _ in clustered if p < current_price],
         key=lambda x: x[1], reverse=True
@@ -122,21 +116,34 @@ def find_support_resistance(df, window=10, num_levels=3):
     return supports, resistances
 
 
-def nearest_level_distance(price, supports, resistances):
-    """Возвращает расстояние до ближайшего уровня в %"""
-    all_levels = [p for _, p in supports + resistances]
-    if not all_levels:
-        return None
-    nearest = min(all_levels, key=lambda x: abs(x - price))
-    distance_pct = abs(nearest - price) / price * 100
-    return distance_pct, nearest
+# =====================================================
+# ЛИКВИДНОСТЬ
+# =====================================================
+def find_liquidity_levels(df, lookback=50):
+    recent = df.tail(lookback)
+    swing_highs = []
+    swing_lows = []
+
+    for i in range(2, len(recent) - 2):
+        h = recent['high'].iloc[i]
+        l = recent['low'].iloc[i]
+        if (h > recent['high'].iloc[i-1] and h > recent['high'].iloc[i-2] and
+                h > recent['high'].iloc[i+1] and h > recent['high'].iloc[i+2]):
+            swing_highs.append(h)
+        if (l < recent['low'].iloc[i-1] and l < recent['low'].iloc[i-2] and
+                l < recent['low'].iloc[i+1] and l < recent['low'].iloc[i+2]):
+            swing_lows.append(l)
+
+    current_price = recent['close'].iloc[-1]
+    liq_above = sorted([h for h in swing_highs if h > current_price])[:2]
+    liq_below = sorted([l for l in swing_lows if l < current_price], reverse=True)[:2]
+    return liq_above, liq_below
 
 
 # =====================================================
 # ПАТТЕРНЫ СВЕЧЕЙ
 # =====================================================
 def detect_candle_patterns(df):
-    """Распознаёт паттерны свечей на последних свечах"""
     patterns = []
     last = df.iloc[-1]
     prev = df.iloc[-2]
@@ -149,58 +156,25 @@ def detect_candle_patterns(df):
     if total_range == 0:
         return patterns, "NEUTRAL"
 
-    # --- МОЛОТ (бычий) ---
-    if (lower_shadow >= body * 2 and
-        upper_shadow <= body * 0.3 and
-        last['close'] > last['open']):
+    if lower_shadow >= body * 2 and upper_shadow <= body * 0.3 and last['close'] > last['open']:
         patterns.append("🔨 Молот (бычий)")
-
-    # --- ПЕРЕВЁРНУТЫЙ МОЛОТ (бычий) ---
-    if (upper_shadow >= body * 2 and
-        lower_shadow <= body * 0.3 and
-        last['close'] > last['open']):
-        patterns.append("🔨 Перевёрнутый молот (бычий)")
-
-    # --- ПАДАЮЩАЯ ЗВЕЗДА (медвежий) ---
-    if (upper_shadow >= body * 2 and
-        lower_shadow <= body * 0.3 and
-        last['close'] < last['open']):
+    if upper_shadow >= body * 2 and lower_shadow <= body * 0.3 and last['close'] < last['open']:
         patterns.append("⭐ Падающая звезда (медвежий)")
-
-    # --- ДОДЖИ ---
     if body <= total_range * 0.1:
         patterns.append("➖ Доджи (неопределённость)")
-
-    # --- БЫЧЬЕ ПОГЛОЩЕНИЕ ---
-    if (last['close'] > last['open'] and
-        prev['close'] < prev['open'] and
-        last['open'] < prev['close'] and
-        last['close'] > prev['open']):
+    if (last['close'] > last['open'] and prev['close'] < prev['open'] and
+            last['open'] < prev['close'] and last['close'] > prev['open']):
         patterns.append("📈 Бычье поглощение")
-
-    # --- МЕДВЕЖЬЕ ПОГЛОЩЕНИЕ ---
-    if (last['close'] < last['open'] and
-        prev['close'] > prev['open'] and
-        last['open'] > prev['close'] and
-        last['close'] < prev['open']):
+    if (last['close'] < last['open'] and prev['close'] > prev['open'] and
+            last['open'] > prev['close'] and last['close'] < prev['open']):
         patterns.append("📉 Медвежье поглощение")
-
-    # --- ПИНБАР БЫЧИЙ ---
-    if (lower_shadow >= total_range * 0.6 and
-        body <= total_range * 0.3):
+    if lower_shadow >= total_range * 0.6 and body <= total_range * 0.3:
         patterns.append("📌 Пинбар (бычий)")
-
-    # --- ПИНБАР МЕДВЕЖИЙ ---
-    if (upper_shadow >= total_range * 0.6 and
-        body <= total_range * 0.3):
+    if upper_shadow >= total_range * 0.6 and body <= total_range * 0.3:
         patterns.append("📌 Пинбар (медвежий)")
 
-    # Определяем общий сигнал паттернов
-    bullish_words = ["бычий", "Молот", "Пинбар (бычий)", "Поглощение (бычий)"]
-    bearish_words = ["медвежий", "Звезда", "Поглощение (медвежий)", "Пинбар (медвежий)"]
-
-    bullish_count = sum(1 for p in patterns if any(w in p for w in bullish_words))
-    bearish_count = sum(1 for p in patterns if any(w in p for w in bearish_words))
+    bullish_count = sum(1 for p in patterns if any(w in p for w in ["бычий", "Молот", "Поглощение"]))
+    bearish_count = sum(1 for p in patterns if any(w in p for w in ["медвежий", "Звезда"]))
 
     if bullish_count > bearish_count:
         pattern_signal = "BULLISH"
@@ -213,252 +187,256 @@ def detect_candle_patterns(df):
 
 
 # =====================================================
-# АНАЛИЗ ОБЪЁМА И ЛИКВИДНОСТИ
+# АНАЛИЗ ОБЪЁМА
 # =====================================================
 def analyze_volume(df):
-    """Анализирует объём свечей"""
     avg_volume = df['volume'].rolling(20).mean().iloc[-1]
     last_volume = df['volume'].iloc[-1]
     volume_ratio = last_volume / avg_volume if avg_volume > 0 else 1
 
-    if volume_ratio >= 2.0:
-        volume_signal = "STRONG"    # Очень сильный объём
+    if volume_ratio >= 1.5:
+        volume_signal = "STRONG"
         volume_emoji = "🔥"
-    elif volume_ratio >= 1.3:
-        volume_signal = "ABOVE"     # Выше среднего
+    elif volume_ratio >= 1.2:
+        volume_signal = "ABOVE"
         volume_emoji = "📊"
     elif volume_ratio >= 0.7:
-        volume_signal = "NORMAL"    # Нормальный
+        volume_signal = "NORMAL"
         volume_emoji = "➡️"
     else:
-        volume_signal = "WEAK"      # Слабый объём
+        volume_signal = "WEAK"
         volume_emoji = "⚠️"
 
     return {
         "volume_ratio": volume_ratio,
         "volume_signal": volume_signal,
         "volume_emoji": volume_emoji,
-        "avg_volume": avg_volume,
-        "last_volume": last_volume
     }
 
 
-def find_liquidity_levels(df, lookback=50):
-    """Находит уровни ликвидности (зоны скопления стопов)"""
-    recent = df.tail(lookback)
+# =====================================================
+# АНАЛИЗ ОДНОГО ТАЙМФРЕЙМА
+# Возвращает: "LONG" / "SHORT" / "NO SIGNAL" + данные
+# =====================================================
+def analyze_timeframe(df):
+    """
+    Система: Тренд (EMA) + Подтверждение (MACD) + Фильтр (RSI/объём) + Тайминг (SAR)
+    """
 
-    # Зоны ликвидности — это swing high/low где скапливаются стопы
-    swing_highs = []
-    swing_lows = []
+    # --- EMA 20 / 50 / 100 / 200 ---
+    df['EMA20']  = df['close'].ewm(span=20).mean()
+    df['EMA50']  = df['close'].ewm(span=50).mean()
+    df['EMA100'] = df['close'].ewm(span=100).mean()
+    df['EMA200'] = df['close'].ewm(span=200).mean()
 
-    for i in range(2, len(recent) - 2):
-        h = recent['high'].iloc[i]
-        l = recent['low'].iloc[i]
+    # --- MA 50 / 200 ---
+    df['MA50']  = df['close'].rolling(50).mean()
+    df['MA200'] = df['close'].rolling(200).mean()
 
-        # Swing high
-        if (h > recent['high'].iloc[i-1] and h > recent['high'].iloc[i-2] and
-            h > recent['high'].iloc[i+1] and h > recent['high'].iloc[i+2]):
-            swing_highs.append(h)
+    # --- MACD (12/26/9) ---
+    macd = ta.trend.MACD(df['close'], window_fast=12, window_slow=26, window_sign=9)
+    df['MACD']       = macd.macd()
+    df['MACD_signal'] = macd.macd_signal()
+    df['MACD_hist']  = macd.macd_diff()
 
-        # Swing low
-        if (l < recent['low'].iloc[i-1] and l < recent['low'].iloc[i-2] and
-            l < recent['low'].iloc[i+1] and l < recent['low'].iloc[i+2]):
-            swing_lows.append(l)
+    # --- RSI 14 ---
+    df['RSI'] = ta.momentum.RSIIndicator(df['close'], window=14).rsi()
 
-    current_price = recent['close'].iloc[-1]
+    # --- ATR ---
+    df['ATR'] = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close']).average_true_range()
 
-    # Ближайшие уровни ликвидности
-    liq_above = sorted([h for h in swing_highs if h > current_price])[:2]
-    liq_below = sorted([l for l in swing_lows if l < current_price], reverse=True)[:2]
+    # --- Parabolic SAR (step=0.02, max=0.2) ---
+    df['SAR'] = ta.trend.PSARIndicator(
+        df['high'], df['low'], df['close'],
+        step=0.02, max_step=0.2
+    ).psar()
 
-    return liq_above, liq_below
+    # --- ADX ---
+    df['ADX'] = ta.trend.ADXIndicator(df['high'], df['low'], df['close']).adx()
+
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    # ── ФЛЭТ ФИЛЬТР ──
+    ema_diff_pct = abs(last['EMA20'] - last['EMA50']) / last['EMA50'] * 100
+    if ema_diff_pct < 0.15:  # EMA20 ≈ EMA50 → флэт → молчим
+        return "NO SIGNAL", last
+
+    # ── ФИЛЬТР ПОСЛЕ СИЛЬНОГО ДВИЖЕНИЯ ──
+    price_move = abs(last['close'] - prev['close'])
+    if price_move > last['ATR'] * 1.5:
+        return "NO SIGNAL", last
+
+    # ══════════════════════════════════════
+    # LONG CONDITIONS
+    # Тренд: цена выше EMA200, EMA20 > EMA50
+    # Подтверждение: MACD гистограмма растёт И выше 0
+    # Фильтр: RSI 45–70, объём выше среднего
+    # Тайминг: SAR ниже цены
+    # ══════════════════════════════════════
+    long_trend = (
+        last['close'] > last['EMA200'] and
+        last['close'] > last['MA200'] and
+        last['EMA20'] > last['EMA50']
+    )
+    long_macd = (
+        last['MACD_hist'] > 0 and
+        last['MACD_hist'] > prev['MACD_hist']  # гистограмма растёт
+    )
+    long_rsi    = 45 < last['RSI'] < 70
+    long_sar    = last['SAR'] < last['close']
+
+    # ══════════════════════════════════════
+    # SHORT CONDITIONS (зеркально)
+    # ══════════════════════════════════════
+    short_trend = (
+        last['close'] < last['EMA200'] and
+        last['close'] < last['MA200'] and
+        last['EMA20'] < last['EMA50']
+    )
+    short_macd = (
+        last['MACD_hist'] < 0 and
+        last['MACD_hist'] < prev['MACD_hist']  # гистограмма падает
+    )
+    short_rsi   = 30 < last['RSI'] < 55
+    short_sar   = last['SAR'] > last['close']
+
+    if long_trend and long_macd and long_rsi and long_sar:
+        return "LONG", last
+    elif short_trend and short_macd and short_rsi and short_sar:
+        return "SHORT", last
+    else:
+        return "NO SIGNAL", last
 
 
 # =====================================================
-# АНАЛИЗ ОДНОЙ МОНЕТЫ НА ОДНОМ ТФ
+# АНАЛИЗ МОНЕТЫ — СИСТЕМА 1H → 30m → 15m
+# 1H = тренд (обязательно)
+# 30m или 15m = подтверждение (хотя бы один)
 # =====================================================
-def analyze_symbol(symbol, timeframe):
+def analyze_symbol(symbol, timeframes):
     try:
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=150)
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        results = {}
 
-        # --- Базовые индикаторы ---
-        df['MA'] = df['close'].rolling(20).mean()
-        df['EMA'] = df['close'].ewm(span=20).mean()
+        for tf in timeframes:
+            limit = 250  # нужно для EMA200
+            ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
 
-        bb = ta.volatility.BollingerBands(df['close'])
-        df['bb_up'] = bb.bollinger_hband()
-        df['bb_low'] = bb.bollinger_lband()
+            side, last = analyze_timeframe(df)
+            results[tf] = {"side": side, "last": last, "df": df}
 
-        df['SAR'] = ta.trend.PSARIndicator(df['high'], df['low'], df['close']).psar()
+        # ── СТАРШИЙ ПОДТВЕРЖДАЕТ МЛАДШЕГО ──
+        tf_1h  = timeframes[2]  # '1h'
+        tf_30m = timeframes[1]  # '30m'
+        tf_15m = timeframes[0]  # '15m'
 
-        macd = ta.trend.MACD(df['close'])
-        df['MACD'] = macd.macd()
-        df['MACD_signal'] = macd.macd_signal()
+        side_1h  = results[tf_1h]['side']
+        side_30m = results[tf_30m]['side']
+        side_15m = results[tf_15m]['side']
 
-        df['RSI'] = ta.momentum.RSIIndicator(df['close']).rsi()
-        df['ATR'] = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close']).average_true_range()
-        df['ADX'] = ta.trend.ADXIndicator(df['high'], df['low'], df['close']).adx()
+        # 1H обязателен
+        if side_1h == "NO SIGNAL":
+            return {"side": "NO SIGNAL"}
 
-        # --- Stochastic RSI ---
-        stoch_rsi = ta.momentum.StochRSIIndicator(df['close'])
-        df['stoch_rsi_k'] = stoch_rsi.stochrsi_k()
-        df['stoch_rsi_d'] = stoch_rsi.stochrsi_d()
+        # Хотя бы 30m или 15m подтверждает
+        junior_confirms = (side_30m == side_1h) or (side_15m == side_1h)
+        if not junior_confirms:
+            return {"side": "NO SIGNAL"}
 
-        # --- OBV ---
-        df['OBV'] = ta.volume.OnBalanceVolumeIndicator(df['close'], df['volume']).on_balance_volume()
-        df['OBV_MA'] = df['OBV'].rolling(20).mean()
+        final_side = side_1h
 
-        # --- Ichimoku ---
-        ichimoku = ta.trend.IchimokuIndicator(df['high'], df['low'])
-        df['ichi_a'] = ichimoku.ichimoku_a()
-        df['ichi_b'] = ichimoku.ichimoku_b()
-        df['ichi_base'] = ichimoku.ichimoku_base_line()
-        df['ichi_conv'] = ichimoku.ichimoku_conversion_line()
+        # Берём данные с 1H для торгового плана
+        last_1h = results[tf_1h]['last']
+        df_1h   = results[tf_1h]['df']
 
-        last = df.iloc[-1]
-        trend_strong = last['ADX'] > 20
+        # --- Объём (с 1H) ---
+        volume_data = analyze_volume(df_1h)
+        if volume_data['volume_signal'] == "WEAK":
+            return {"side": "NO SIGNAL"}
 
-        # --- OBV тренд ---
-        obv_bullish = last['OBV'] > last['OBV_MA']
-        obv_bearish = last['OBV'] < last['OBV_MA']
+        # --- Паттерны свечей (с 15m — точка входа) ---
+        df_15m = results[tf_15m]['df']
+        patterns, pattern_signal = detect_candle_patterns(df_15m)
 
-        # --- Stoch RSI сигнал ---
-        stoch_oversold = last['stoch_rsi_k'] < 0.2 and last['stoch_rsi_d'] < 0.2
-        stoch_overbought = last['stoch_rsi_k'] > 0.8 and last['stoch_rsi_d'] > 0.8
+        if final_side == "LONG" and pattern_signal == "BEARISH":
+            return {"side": "NO SIGNAL"}
+        if final_side == "SHORT" and pattern_signal == "BULLISH":
+            return {"side": "NO SIGNAL"}
 
-        # --- Ichimoku сигнал ---
-        ichi_bullish = (last['close'] > last['ichi_a'] and
-                        last['close'] > last['ichi_b'] and
-                        last['ichi_conv'] > last['ichi_base'])
-        ichi_bearish = (last['close'] < last['ichi_a'] and
-                        last['close'] < last['ichi_b'] and
-                        last['ichi_conv'] < last['ichi_base'])
+        # --- Уровни ---
+        supports, resistances = find_support_resistance(df_1h)
+        liq_above, liq_below  = find_liquidity_levels(df_1h)
 
-        # --- Базовые условия ---
-        long_cond = (
-            trend_strong and
-            last['close'] > last['MA'] and
-            last['close'] > last['EMA'] and
-            last['SAR'] < last['close'] and
-            last['MACD'] > last['MACD_signal'] and
-            last['RSI'] < 45 and
-            obv_bullish and
-            stoch_oversold and
-            ichi_bullish
+        # --- Торговый план ---
+        trade_plan = build_advanced_trade_plan(
+            last_1h['close'], last_1h['ATR'], final_side
         )
-
-        short_cond = (
-            trend_strong and
-            last['close'] < last['MA'] and
-            last['close'] < last['EMA'] and
-            last['SAR'] > last['close'] and
-            last['MACD'] < last['MACD_signal'] and
-            last['RSI'] > 55 and
-            obv_bearish and
-            stoch_overbought and
-            ichi_bearish
-        )
-
-        if long_cond:
-            side = "LONG"
-        elif short_cond:
-            side = "SHORT"
-        else:
-            return {"side": "NO SIGNAL"}
-
-        # --- Паттерны свечей ---
-        patterns, pattern_signal = detect_candle_patterns(df)
-
-        # Паттерн должен подтверждать направление
-        if side == "LONG" and pattern_signal == "BEARISH":
-            return {"side": "NO SIGNAL"}
-        if side == "SHORT" and pattern_signal == "BULLISH":
-            return {"side": "NO SIGNAL"}
-
-        # --- Объём ---
-        volume_data = analyze_volume(df)
-
-        # Слабый объём — пропускаем сигнал
-        if volume_data["volume_signal"] == "WEAK":
-            return {"side": "NO SIGNAL"}
-
-        # --- Уровни поддержки/сопротивления ---
-        supports, resistances = find_support_resistance(df)
-        liq_above, liq_below = find_liquidity_levels(df)
-
-        trade_plan = build_advanced_trade_plan(last['close'], last['ATR'], side)
 
         return {
-            "symbol": symbol,
-            "side": side,
-            "current_price": last['close'],
-            "rsi": last['RSI'],
-            "adx": last['ADX'],
-            "stoch_k": last['stoch_rsi_k'],
-            "stoch_d": last['stoch_rsi_d'],
-            "obv_trend": "↑ Бычий" if obv_bullish else "↓ Медвежий",
-            "ichi_signal": "✅ Выше облака" if ichi_bullish else "❌ Ниже облака",
-            "patterns": patterns,
-            "pattern_signal": pattern_signal,
-            "volume_data": volume_data,
-            "supports": supports,
-            "resistances": resistances,
-            "liq_above": liq_above,
-            "liq_below": liq_below,
+            "symbol":        symbol,
+            "side":          final_side,
+            "current_price": last_1h['close'],
+            "rsi":           last_1h['RSI'],
+            "adx":           last_1h['ADX'],
+            "ema20":         last_1h['EMA20'],
+            "ema50":         last_1h['EMA50'],
+            "ema200":        last_1h['EMA200'],
+            "macd_hist":     last_1h['MACD_hist'],
+            "tf_1h":         side_1h,
+            "tf_30m":        side_30m,
+            "tf_15m":        side_15m,
+            "volume_data":   volume_data,
+            "patterns":      patterns,
+            "supports":      supports,
+            "resistances":   resistances,
+            "liq_above":     liq_above,
+            "liq_below":     liq_below,
             **trade_plan
         }
+
     except Exception as e:
         print(f"Ошибка анализа {symbol}: {e}")
         return {"side": "NO SIGNAL"}
 
 
 # =====================================================
-# АНАЛИЗ ВСЕХ ТАЙМФРЕЙМОВ ПАРАЛЛЕЛЬНО
+# АСИНХРОННЫЙ ЗАПУСК ДЛЯ ВСЕХ МОНЕТ
 # =====================================================
 async def analyze_all_timeframes_async(symbol):
     loop = asyncio.get_running_loop()
-    tasks = [loop.run_in_executor(None, analyze_symbol, symbol, tf) for tf in TIMEFRAMES]
-    signals = await asyncio.gather(*tasks)
-    sides = [s['side'] for s in signals if 'side' in s]
-
-    if len(sides) == 3 and all(s == "LONG" for s in sides):
-        return signals[0]
-    if len(sides) == 3 and all(s == "SHORT" for s in sides):
-        return signals[0]
-
-    return {"side": "NO SIGNAL"}
+    signal = await loop.run_in_executor(None, analyze_symbol, symbol, TIMEFRAMES)
+    return signal
 
 
 # =====================================================
 # ФОРМАТИРОВАНИЕ СИГНАЛА
 # =====================================================
+def tf_emoji(side):
+    if side == "LONG":   return "📈"
+    if side == "SHORT":  return "📉"
+    return "⬜"
+
+
 def format_signal(signal):
-    symbol_formatted = signal['symbol'].replace('/', '')
-    side = signal['side']
-    emoji = "📈" if side == "LONG" else "📉"
+    symbol_fmt = signal['symbol'].replace('/', '')
+    side       = signal['side']
+    emoji      = "📈" if side == "LONG" else "📉"
+    vol        = signal['volume_data']
 
-    # Паттерны
-    patterns_text = "\n   ".join(signal['patterns']) if signal['patterns'] else "Паттернов нет"
-
-    # Уровни поддержки
-    supports_text = "\n   ".join([f"{p:.4f}" for _, p in signal['supports']]) if signal['supports'] else "—"
-    resistances_text = "\n   ".join([f"{p:.4f}" for _, p in signal['resistances']]) if signal['resistances'] else "—"
-
-    # Ликвидность
-    liq_above_text = " | ".join([f"{p:.4f}" for p in signal['liq_above']]) if signal['liq_above'] else "—"
-    liq_below_text = " | ".join([f"{p:.4f}" for p in signal['liq_below']]) if signal['liq_below'] else "—"
-
-    # Объём
-    vol = signal['volume_data']
-    volume_text = f"{vol['volume_emoji']} x{vol['volume_ratio']:.1f} от среднего"
+    patterns_text    = "\n   ".join(signal['patterns']) if signal['patterns'] else "—"
+    supports_text    = " | ".join([f"{p:.4f}" for _, p in signal['supports']])    if signal['supports']    else "—"
+    resistances_text = " | ".join([f"{p:.4f}" for _, p in signal['resistances']]) if signal['resistances'] else "—"
+    liq_above_text   = " | ".join([f"{p:.4f}" for p in signal['liq_above']])      if signal['liq_above']   else "—"
+    liq_below_text   = " | ".join([f"{p:.4f}" for p in signal['liq_below']])      if signal['liq_below']   else "—"
 
     return f"""
-🚨 TRADE PLAN | {symbol_formatted} | {side}
-TF: 15M/30M/1H | Сигнал: {emoji}
+🚨 TRADE PLAN | {symbol_fmt} | {side}
+{emoji} Подтверждение по таймфреймам:
+   1H:  {tf_emoji(signal['tf_1h'])}  30M: {tf_emoji(signal['tf_30m'])}  15M: {tf_emoji(signal['tf_15m'])}
 
 💰 Зона набора:
-   {signal['entry_min']:.4f} - {signal['entry_max']:.4f}
+   {signal['entry_min']:.4f} — {signal['entry_max']:.4f}
 
 🛑 Стоп-лосс:
    {signal['stop_loss']:.4f}
@@ -466,34 +444,28 @@ TF: 15M/30M/1H | Сигнал: {emoji}
 ❌ Отмена идеи:
    H1 close {'<' if side == 'LONG' else '>'} {signal['invalidation']:.4f}
 
-🎯 Зона фиксации:
-   TP1: {signal['tp1']:.4f} (25% позиции)
-   TP2: {signal['tp2']:.4f} (50% позиции) - RR 1:2
-   TP3: {signal['tp3']:.4f} (25% позиции) - RR 1:3
+🎯 Тейки:
+   TP1: {signal['tp1']:.4f}  (25% позиции)
+   TP2: {signal['tp2']:.4f}  (50% позиции) — RR 1:2
+   TP3: {signal['tp3']:.4f}  (25% позиции) — RR 1:3
 
 📊 Индикаторы:
-   RSI: {signal['rsi']:.1f}
-   ADX: {signal['adx']:.1f}
-   Stoch RSI: K={signal['stoch_k']:.2f} D={signal['stoch_d']:.2f}
-   OBV: {signal['obv_trend']}
-   Ichimoku: {signal['ichi_signal']}
+   RSI: {signal['rsi']:.1f}   ADX: {signal['adx']:.1f}
+   EMA20: {signal['ema20']:.4f}
+   EMA50: {signal['ema50']:.4f}
+   EMA200: {signal['ema200']:.4f}
+   MACD hist: {signal['macd_hist']:.6f}
 
-🕯 Паттерны свечей:
+📦 Объём: {vol['volume_emoji']} x{vol['volume_ratio']:.1f} от среднего
+
+🕯 Паттерны:
    {patterns_text}
 
-📦 Объём:
-   {volume_text}
+🏛 Поддержки:  {supports_text}
+🏛 Сопротивления: {resistances_text}
 
-🏛 Поддержки:
-   {supports_text}
+💧 Ликвидность выше: {liq_above_text}
+💧 Ликвидность ниже: {liq_below_text}
 
-🏛 Сопротивления:
-   {resistances_text}
-
-💧 Ликвидность выше:
-   {liq_above_text}
-💧 Ликвидность ниже:
-   {liq_below_text}
-
-💵 Текущая цена: {signal['current_price']:.4f}
+💵 Цена: {signal['current_price']:.4f}
 """
