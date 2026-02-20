@@ -5,3 +5,7 @@ __pycache__/
 *.pyc
 .vscode/
 venv/
+.env
+trades_history.json
+*.pyc
+*.log
