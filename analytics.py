@@ -61,7 +61,7 @@ async def check_fmp_calendar_blocking():
             async with session.get(url, params=params, timeout=10) as response:
                 if response.status == 200:
                     data = await response.json()
-                    if not data:
+                    if not data or len(data) == 0:
                         return False
                     
                     now_utc = datetime.now(timezone.utc)
@@ -546,3 +546,91 @@ def tf_emoji(side):
         return "📉"
     else:
         return "➖"
+
+# =====================================================
+# ФОРМАТИРОВАНИЕ СИГНАЛА
+# =====================================================
+def format_signal(signal_data):
+    """Форматирует сигнал для отправки в Telegram"""
+    if not signal_data or signal_data.get("side") == "NO SIGNAL":
+        return None
+    
+    symbol = signal_data.get("symbol", "Unknown")
+    side = signal_data.get("side", "UNKNOWN")
+    price = signal_data.get("current_price", 0)
+    
+    # Эмодзи направления
+    side_emoji = "📈" if side == "LONG" else "📉"
+    
+    # Форматируем уровни
+    entry_min = signal_data.get("entry_min", 0)
+    entry_max = signal_data.get("entry_max", 0)
+    stop_loss = signal_data.get("stop_loss", 0)
+    invalidation = signal_data.get("invalidation", 0)
+    tp1 = signal_data.get("tp1", 0)
+    tp2 = signal_data.get("tp2", 0)
+    tp3 = signal_data.get("tp3", 0)
+    
+    # Индикаторы
+    rsi = signal_data.get("rsi", 0)
+    adx = signal_data.get("adx", 0)
+    ema20 = signal_data.get("ema20", 0)
+    ema50 = signal_data.get("ema50", 0)
+    ema200 = signal_data.get("ema200", 0)
+    
+    # Таймфреймы
+    tf_1d = signal_data.get("tf_1d", "")
+    tf_4h = signal_data.get("tf_4h", "")
+    tf_1h = signal_data.get("tf_1h", "")
+    tf_30m = signal_data.get("tf_30m", "")
+    tf_15m = signal_data.get("tf_15m", "")
+    
+    # BTC контекст
+    btc_context = signal_data.get("btc_context", "UNKNOWN")
+    btc_emoji = "🔥" if btc_context == "TRENDING" else "😴"
+    
+    # Объём
+    volume_data = signal_data.get("volume_data", {})
+    volume_emoji = volume_data.get("volume_emoji", "📊")
+    volume_ratio = volume_data.get("volume_ratio", 0)
+    
+    # Паттерны
+    patterns = signal_data.get("patterns", [])
+    patterns_str = "\n".join(patterns) if patterns else "Нет паттернов"
+    
+    # Формируем сообщение
+    message = f"""
+{side_emoji} *{symbol}* - {side}
+
+💰 *Цена:* ${price:.2f}
+📊 *RSI:* {rsi:.1f} | *ADX:* {adx:.1f}
+📈 *EMA20:* {ema20:.2f}
+📈 *EMA50:* {ema50:.2f}
+📈 *EMA200:* {ema200:.2f}
+
+🎯 *Точка входа:* ${entry_min:.2f} - ${entry_max:.2f}
+🛑 *Stop Loss:* ${stop_loss:.2f}
+❌ *Invalidation:* ${invalidation:.2f}
+
+📌 *Take Profit:*
+  TP1: ${tp1:.2f}
+  TP2: ${tp2:.2f}
+  TP3: ${tp3:.2f}
+
+📊 *Анализ таймфреймов:*
+  1D: {tf_emoji(tf_1d)} {tf_1d}
+  4H: {tf_emoji(tf_4h)} {tf_4h}
+  1H: {tf_emoji(tf_1h)} {tf_1h}
+  30m: {tf_emoji(tf_30m)} {tf_30m}
+  15m: {tf_emoji(tf_15m)} {tf_15m}
+
+🌍 *BTC контекст:* {btc_emoji} {btc_context}
+📊 *Объём:* {volume_emoji} x{volume_ratio:.2f}
+
+🔍 *Паттерны:*
+{patterns_str}
+
+⚠️ *Не забывайте про риск-менеджмент!*
+"""
+    
+    return message
