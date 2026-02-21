@@ -372,10 +372,15 @@ def analyze_timeframe(df):
 # =====================================================
 # КОНТЕКСТ BTC + МАКРО
 # =====================================================
-btc_context_cache = {"value": "TRENDING", "timestamp": 0}
+btc_context_cache = {"value": "FLAT", "timestamp": 0}
 
 async def get_btc_context_cached():
-    """Возвращает только BTC контекст (для обратной совместимости)"""
+    """
+    Возвращает контекст BTC с 3 состояниями:
+    - BULL: Бычий тренд (цена > EMA200, EMA20 > EMA50)
+    - BEAR: Медвежий тренд (цена < EMA200, EMA20 < EMA50)
+    - FLAT: Боковик (EMA20 и EMA50 близко)
+    """
     global btc_context_cache
     now = datetime.now().timestamp()
 
@@ -387,14 +392,23 @@ async def get_btc_context_cached():
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['EMA20'] = df['close'].ewm(span=20).mean()
         df['EMA50'] = df['close'].ewm(span=50).mean()
+        df['EMA200'] = df['close'].ewm(span=200).mean()
         last = df.iloc[-1]
 
         ema_diff_pct = abs(last['EMA20'] - last['EMA50']) / last['EMA50'] * 100
+        price = last['close']
+        ema200 = last['EMA200']
 
-        if ema_diff_pct < 0.5:
+        # Сначала проверяем на FLAT (приоритет)
+        if ema_diff_pct < 0.8:  # Смягчил с 0.5% до 0.8%
             result = "FLAT"
+        # Затем определяем направление тренда
+        elif price > ema200 and last['EMA20'] > last['EMA50']:
+            result = "BULL"
+        elif price < ema200 and last['EMA20'] < last['EMA50']:
+            result = "BEAR"
         else:
-            result = "TRENDING"
+            result = "FLAT"  # Если сигналы противоречивы
 
         btc_context_cache = {"value": result, "timestamp": now}
         logger.info(f"BTC контекст обновлён: {result}")
@@ -402,7 +416,7 @@ async def get_btc_context_cached():
 
     except Exception as e:
         logger.error(f"Ошибка BTC контекста: {e}")
-        return "TRENDING"
+        return "FLAT"
 
 async def get_market_context_cached():
     """Возвращает полный контекст: BTC + Макро (DXY + SPX)"""
@@ -470,11 +484,12 @@ def analyze_symbol(symbol, timeframes, market_context):
 
     try:
         if symbol == "BTC/USDT":
-            btc_context = "TRENDING"
+            btc_context = "BULL"  # Для BTC не блокируем по направлению
 
-        # При FLAT BTC ужесточаем фильтры вместо рандома
+        # Определяем режим по BTC контексту
         flat_mode = btc_context == "FLAT"
-        
+        btc_bias = "LONG" if btc_context == "BULL" else ("SHORT" if btc_context == "BEAR" else "NEUTRAL")
+
         # Получаем макро уклон
         macro_bias = get_macro_bias(macro_context)
         
@@ -517,6 +532,11 @@ def analyze_symbol(symbol, timeframes, market_context):
         # Проверка макро уклона — блокируем сигналы против макро
         if macro_bias != "NEUTRAL" and final_side != macro_bias:
             logger.debug(f"{symbol}: Сигнал против макро уклона ({macro_bias}), пропуск")
+            return {"side": "NO SIGNAL", "btc_context": btc_context}
+        
+        # Проверка BTC направления — блокируем сигналы против BTC (кроме FLAT)
+        if btc_bias != "NEUTRAL" and final_side != btc_bias:
+            logger.debug(f"{symbol}: Сигнал против BTC ({btc_bias}), пропуск")
             return {"side": "NO SIGNAL", "btc_context": btc_context}
 
         df_1h = results['1h']['df']
@@ -663,7 +683,7 @@ def format_signal(signal_data):
 
     # BTC контекст
     btc_context = signal_data.get("btc_context", "UNKNOWN")
-    btc_emoji = "🔥" if btc_context == "TRENDING" else "😴"
+    btc_emoji = {"BULL": "🐂", "BEAR": "🐻", "FLAT": "😴"}
 
     # Объём
     volume_data = signal_data.get("volume_data", {})
@@ -756,7 +776,7 @@ def format_signal(signal_data):
   30m: {tf_emoji(tf_30m)} {tf_30m}
   15m: {tf_emoji(tf_15m)} {tf_15m}
 
-🌍 *BTC контекст:* {btc_emoji} {btc_context}
+🌍 *BTC контекст:* {btc_emoji.get(btc_context, '😴')} {btc_context}
 📊 *Макро уклон:* {bias_emoji.get(macro_bias, '➖')} {bias_str.get(macro_bias, 'Нейтральный')}
 🏛 *S&P 500:* {spx_str}
 💵 *DXY:* {dxy_str}

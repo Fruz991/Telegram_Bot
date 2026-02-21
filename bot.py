@@ -286,8 +286,7 @@ async def auto_scan():
             market_context = await get_market_context_cached()
 
             btc_context = market_context["btc"]
-            if btc_context == "FLAT":
-                logger.info("BTC во флэте, снижаем активность")
+            logger.info(f"BTC контекст: {btc_context}")
 
             for symbol in SYMBOLS:
                 if symbol in signal_cooldown:
