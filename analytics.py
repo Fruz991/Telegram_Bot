@@ -3,15 +3,13 @@ import os
 import socket
 import logging
 import aiohttp
-import feedparser
 import ccxt
 import pandas as pd
 import numpy as np
 import ta
 import pytz
 from datetime import datetime, timezone, timedelta
-from config import TIMEFRAMES, FMP_API_KEY, FMP_CHECK_MINUTES, FMP_IMPACT_FILTER
-from config import RSS_CHECK_MINUTES, RSS_FEEDS, RSS_KEYWORDS
+from config import TIMEFRAMES
 from macro_tracker import macro_tracker
 
 logger = logging.getLogger(__name__)
@@ -46,60 +44,6 @@ exchange = ccxt.bybit({
         "adjustForTimeDifference": True
     }
 })
-
-# =====================================================
-# ПРОВЕРКА МАКРО-СОБЫТИЙ (FMP) - ОТКЛЮЧЕНО
-# =====================================================
-async def check_fmp_calendar_blocking():
-    """Проверяет экономический календарь FMP - ОТКЛЮЧЕНО"""
-    # ОТКЛЮЧЕНО: API endpoint больше не доступен для бесплатных аккаунтов
-    # Legacy endpoints were deprecated in August 2025
-    logger.info("FMP проверка отключена (API endpoint устарел)")
-    return False
-
-# =====================================================
-# ПРОВЕРКА RSS НОВОСТЕЙ
-# =====================================================
-async def check_rss_blocking():
-    """Проверяет RSS-фиды на наличие важных новостей"""
-    if not RSS_FEEDS:
-        return False
-    
-    now_utc = datetime.now(timezone.utc)
-    
-    for feed_url in RSS_FEEDS:
-        try:
-            loop = asyncio.get_running_loop()
-            feed = await loop.run_in_executor(None, feedparser.parse, feed_url)
-            
-            for entry in feed.entries[:10]:
-                published = entry.get("published_parsed")
-                if published:
-                    pub_time = datetime(*published[:6], tzinfo=timezone.utc)
-                    time_diff = now_utc - pub_time
-                    
-                    if time_diff.total_seconds() < RSS_CHECK_MINUTES * 60:
-                        title = (entry.get("title", "") + " " + entry.get("summary", "")).lower()
-                        if any(kw.lower() in title for kw in RSS_KEYWORDS):
-                            logger.warning(f"RSS новость: {entry.get('title')}")
-                            return True
-        except Exception as e:
-            logger.error(f"Ошибка RSS {feed_url}: {e}")
-            continue
-    
-    return False
-
-# =====================================================
-# ОБЪЕДИНЁННАЯ ПРОВЕРКА НОВОСТЕЙ
-# =====================================================
-async def check_news_blocking():
-    """Главная функция проверки новостей"""
-    # FMP отключён, проверяем только RSS
-    rss_blocking = await check_rss_blocking()
-    if rss_blocking:
-        return True
-    
-    return False
 
 # =====================================================
 # ТОРГОВЫЙ ПЛАН

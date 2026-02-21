@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from config import SYMBOLS, COOLDOWN_SECONDS, SCAN_INTERVAL_SECONDS
 from tracker import tracker
 from keyboards import signal_keyboard
-from analytics import analyze_all_timeframes_async, format_signal, check_news_blocking, get_market_context_cached
+from analytics import analyze_all_timeframes_async, format_signal, get_market_context_cached
 
 
 # =====================================================
@@ -134,13 +134,7 @@ async def send_signal(message: types.Message):
         await message.reply("🚫 Лимит на сегодня достигнут. Иди отдыхай.")
         return
 
-    await message.reply("🔍 Анализирую рынок и проверяю новости...")
-
-    news_blocking = await check_news_blocking()
-    if news_blocking:
-        await message.reply("⚠️ Важные новости в ближайшие 30-60 минут. Торговля не рекомендуется.")
-        logger.warning("Сигнал отменён из-за новостей")
-        return
+    await message.reply("🔍 Анализирую рынок...")
 
     now = time.time()
     market_context = await get_market_context_cached()
@@ -201,11 +195,6 @@ async def send_best_signal(callback: types.CallbackQuery):
         return
 
     await callback.answer("🔍 Анализирую рынок...")
-
-    news_blocking = await check_news_blocking()
-    if news_blocking:
-        await callback.message.answer("⚠️ Важные новости в ближайшие 30-60 минут. Торговля не рекомендуется.")
-        return
 
     now = time.time()
     market_context = await get_market_context_cached()
@@ -290,12 +279,6 @@ async def auto_scan():
             if not tracker.can_trade():
                 logger.warning("Лимит стопов достигнут, пауза 1 час")
                 await asyncio.sleep(3600)
-                continue
-
-            news_blocking = await check_news_blocking()
-            if news_blocking:
-                logger.warning("Новости обнаружены, пропускаем скан")
-                await asyncio.sleep(SCAN_INTERVAL_SECONDS)
                 continue
 
             now = time.time()

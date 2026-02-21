@@ -26,28 +26,3 @@ COOLDOWN_SECONDS = 1800  # 30 минут между сигналами на од
 
 # Настройки скана
 SCAN_INTERVAL_SECONDS = 300  # 5 минут между полными сканами
-
-# =====================================================
-# НОВОСТИ FMP (Макроэкономика) - ЧИТАЕМ ИЗ ENV!
-# =====================================================
-FMP_API_KEY = os.getenv("FMP_API_KEY")  # ← Теперь читает из окружения!
-FMP_CHECK_MINUTES = int(os.getenv("FMP_CHECK_MINUTES", 60))
-FMP_IMPACT_FILTER = os.getenv("FMP_IMPACT_FILTER", "High,Medium").split(",")
-
-# =====================================================
-# НОВОСТИ RSS (Крипто)
-# =====================================================
-RSS_CHECK_MINUTES = int(os.getenv("RSS_CHECK_MINUTES", 30))
-
-# Читаем из env, если есть — иначе дефолтные значения
-rss_feeds_raw = os.getenv("RSS_FEEDS")
-RSS_FEEDS = rss_feeds_raw.split(",") if rss_feeds_raw else [
-    "https://www.coindesk.com/arc/outboundfeeds/rss/",
-    "https://cointelegraph.com/rss",
-    "https://cryptoslate.com/feed/"
-]
-
-rss_keywords_raw = os.getenv("RSS_KEYWORDS")
-RSS_KEYWORDS = rss_keywords_raw.split(",") if rss_keywords_raw else [
-    "hack", "exploit", "SEC", "ban", "ETF", "listing", "delist"
-]
