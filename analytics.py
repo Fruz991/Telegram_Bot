@@ -41,66 +41,14 @@ exchange = ccxt.bybit({
 })
 
 # =====================================================
-# ПРОВЕРКА МАКРО-СОБЫТИЙ (FMP)
+# ПРОВЕРКА МАКРО-СОБЫТИЙ (FMP) - ОТКЛЮЧЕНО
 # =====================================================
 async def check_fmp_calendar_blocking():
-    """Проверяет экономический календарь FMP"""
-    if not FMP_API_KEY:
-        logger.warning("FMP_API_KEY не настроен, пропускаем проверку макро")
-        return False
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            url = "https://financialmodelingprep.com/api/v3/economic_calendar"
-            params = {
-                "apikey": FMP_API_KEY,
-                "from": datetime.now().strftime("%Y-%m-%d"),
-                "to": (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d"),
-            }
-            
-            async with session.get(url, params=params, timeout=10) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    if not data or len(data) == 0:
-                        return False
-                    
-                    now_utc = datetime.now(timezone.utc)
-                    est = pytz.timezone('America/New_York')
-                    utc = pytz.UTC
-                    
-                    for event in data:
-                        impact = event.get("impact", "")
-                        if impact not in FMP_IMPACT_FILTER:
-                            continue
-                        
-                        event_date_str = event.get("date", "")
-                        if not event_date_str:
-                            continue
-                        
-                        try:
-                            naive_dt = datetime.strptime(event_date_str, "%Y-%m-%d %H:%M:%S")
-                            est_dt = est.localize(naive_dt)
-                            event_utc = est_dt.astimezone(utc)
-                            
-                            time_diff = event_utc - now_utc
-                            seconds_until_event = time_diff.total_seconds()
-                            
-                            if 0 < seconds_until_event < FMP_CHECK_MINUTES * 60:
-                                event_name = event.get("event", "Unknown")
-                                currency = event.get("currency", "USD")
-                                logger.warning(f"FMP событие: {event_name} ({currency}) через {int(seconds_until_event/60)} мин")
-                                return True
-                        except Exception as e:
-                            logger.error(f"Ошибка парсинга даты FMP: {e}")
-                            continue
-                    
-                    return False
-                else:
-                    logger.error(f"Ошибка FMP API: {response.status}")
-                    return False
-    except Exception as e:
-        logger.error(f"Ошибка проверки FMP календаря: {e}")
-        return False
+    """Проверяет экономический календарь FMP - ОТКЛЮЧЕНО"""
+    # ОТКЛЮЧЕНО: API endpoint больше не доступен для бесплатных аккаунтов
+    # Legacy endpoints were deprecated in August 2025
+    logger.info("FMP проверка отключена (API endpoint устарел)")
+    return False
 
 # =====================================================
 # ПРОВЕРКА RSS НОВОСТЕЙ
@@ -139,10 +87,7 @@ async def check_rss_blocking():
 # =====================================================
 async def check_news_blocking():
     """Главная функция проверки новостей"""
-    fmp_blocking = await check_fmp_calendar_blocking()
-    if fmp_blocking:
-        return True
-    
+    # FMP отключён, проверяем только RSS
     rss_blocking = await check_rss_blocking()
     if rss_blocking:
         return True
