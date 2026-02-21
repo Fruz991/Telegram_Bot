@@ -16,14 +16,20 @@ from config import RSS_CHECK_MINUTES, RSS_FEEDS, RSS_KEYWORDS
 logger = logging.getLogger(__name__)
 
 # =====================================================
-# IPv4
+# IPv4 ТОЛЬКО ДЛЯ EXCHANGE
 # =====================================================
-original_getaddrinfo = socket.getaddrinfo
+def init_ipv4_only():
+    """Инициализирует IPv4 только для ccxt exchange"""
+    original_getaddrinfo = socket.getaddrinfo
+    
+    def getaddrinfo_ipv4(*args, **kwargs):
+        results = original_getaddrinfo(*args, **kwargs)
+        return [r for r in results if r[0].name == 'AF_INET']
+    
+    socket.getaddrinfo = getaddrinfo_ipv4
+    logger.info("IPv4 only режим активирован")
 
-def getaddrinfo_ipv4(*args, **kwargs):
-    return [x for x in original_getaddrinfo(*args, **kwargs) if x[0].name == 'AF_INET']
-
-socket.getaddrinfo = getaddrinfo_ipv4
+init_ipv4_only()
 
 # =====================================================
 # БИРЖА
@@ -302,6 +308,41 @@ def detect_structure(df):
         return "NO_STRUCTURE"
 
 # =====================================================
+# ДИВЕРГЕНЦИИ RSI
+# =====================================================
+def detect_rsi_divergence(df, window=5):
+    """
+    Ищет бычьи/медвежьи дивергенции между ценой и RSI
+    
+    Бычья дивергенция: цена делает lower low, RSI делает higher low
+    Медвежья дивергенция: цена делает higher high, RSI делает lower high
+    """
+    if len(df) < window * 2:
+        return "NO_DIVERGENCE"
+    
+    last = df.iloc[-1]
+    
+    # Бычья дивергенция
+    price_lows = df['low'].tail(window * 2).values
+    rsi_lows = df['RSI'].tail(window * 2).values
+    
+    # Проверяем: цена делает lower low, RSI делает higher low
+    if (price_lows[-1] < price_lows[0] and rsi_lows[-1] > rsi_lows[0]):
+        logger.debug("🟢 Бычья дивергенция обнаружена")
+        return "BULLISH_DIVERGENCE"
+    
+    # Медвежья дивергенция
+    price_highs = df['high'].tail(window * 2).values
+    rsi_highs = df['RSI'].tail(window * 2).values
+    
+    # Проверяем: цена делает higher high, RSI делает lower high
+    if (price_highs[-1] > price_highs[0] and rsi_highs[-1] < rsi_highs[0]):
+        logger.debug("🔴 Медвежья дивергенция обнаружена")
+        return "BEARISH_DIVERGENCE"
+    
+    return "NO_DIVERGENCE"
+
+# =====================================================
 # АНАЛИЗ ОДНОГО ТАЙМФРЕЙМА
 # =====================================================
 def analyze_timeframe(df):
@@ -312,32 +353,48 @@ def analyze_timeframe(df):
     df['RSI'] = ta.momentum.RSIIndicator(df['close'], window=14).rsi()
     df['ATR'] = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close']).average_true_range()
     df['ADX'] = ta.trend.ADXIndicator(df['high'], df['low'], df['close']).adx()
-    
+
     last = df.iloc[-1]
     prev = df.iloc[-2]
-    
+
+    # ADX фильтр - отсеивает флэтовые сигналы
+    if last['ADX'] < 20:
+        return "NO SIGNAL", last
+
     ema_diff_pct = abs(last['EMA20'] - last['EMA50']) / last['EMA50'] * 100
     if ema_diff_pct < 0.3:
         return "NO SIGNAL", last
-    
+
     avg_atr = df['ATR'].rolling(20).mean().iloc[-1]
     if last['ATR'] < avg_atr * 0.8:
         return "NO SIGNAL", last
-    
+
     price_move = abs(last['close'] - prev['close'])
     if price_move > last['ATR'] * 1.5:
         return "NO SIGNAL", last
-    
+
+    # Проверка наклона EMA20
+    ema20_prev = df['EMA20'].iloc[-2] if len(df) > 1 else last['EMA20']
+    ema20_slope = (last['EMA20'] - ema20_prev) / ema20_prev * 100 if ema20_prev != 0 else 0
+
     structure = detect_structure(df)
-    
-    long_trend = (last['close'] > last['EMA200'] and last['EMA20'] > last['EMA50'])
+
+    long_trend = (
+        last['close'] > last['EMA200'] and 
+        last['EMA20'] > last['EMA50'] and
+        ema20_slope > 0  # EMA20 растёт
+    )
     long_rsi = 50 < last['RSI'] < 70
     long_structure = structure == "BULLISH_STRUCTURE"
-    
-    short_trend = (last['close'] < last['EMA200'] and last['EMA20'] < last['EMA50'])
+
+    short_trend = (
+        last['close'] < last['EMA200'] and 
+        last['EMA20'] < last['EMA50'] and
+        ema20_slope < 0  # EMA20 падает
+    )
     short_rsi = 30 < last['RSI'] < 50
     short_structure = structure == "BEARISH_STRUCTURE"
-    
+
     if long_trend and long_rsi and long_structure:
         return "LONG", last
     elif short_trend and short_rsi and short_structure:
@@ -386,62 +443,86 @@ def analyze_symbol(symbol, timeframes, btc_context):
     try:
         if symbol == "BTC/USDT":
             btc_context = "TRENDING"
-        
-        if btc_context == "FLAT":
-            import random
-            if random.random() < 0.5:
-                return {"side": "NO SIGNAL", "btc_context": "FLAT"}
+
+        # При FLAT BTC ужесточаем фильтры вместо рандома
+        flat_mode = btc_context == "FLAT"
         
         results = {}
         for tf in timeframes:
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf, limit=250)
+            if not ohlcv or len(ohlcv) < 50:
+                logger.warning(f"Недостаточно данных для {symbol} {tf}")
+                return {"side": "NO SIGNAL", "btc_context": btc_context}
+            
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             side, last = analyze_timeframe(df)
             results[tf] = {"side": side, "last": last, "df": df}
-        
+
         side_4h = results['4h']['side']
         last_4h = results['4h']['last']
         allowed_direction = "LONG" if last_4h['close'] > last_4h['EMA200'] else "SHORT"
-        
+
         side_1d = results['1d']['side']
         side_1h = results['1h']['side']
         side_30m = results['30m']['side']
         side_15m = results['15m']['side']
-        
+
         if side_1d == "NO SIGNAL" or side_4h == "NO SIGNAL":
             return {"side": "NO SIGNAL", "btc_context": btc_context}
         if side_1d != side_4h:
             return {"side": "NO SIGNAL", "btc_context": btc_context}
         if side_1h != side_1d:
             return {"side": "NO SIGNAL", "btc_context": btc_context}
-        
+
         junior_confirms = (side_30m == side_1d) or (side_15m == side_1d)
         if not junior_confirms:
             return {"side": "NO SIGNAL", "btc_context": btc_context}
-        
+
         final_side = side_1d
-        
+
         if final_side != allowed_direction:
             return {"side": "NO SIGNAL", "btc_context": btc_context}
-        
+
         df_1h = results['1h']['df']
         volume_data = analyze_volume(df_1h)
-        if volume_data['volume_signal'] == "WEAK":
-            return {"side": "NO SIGNAL", "btc_context": btc_context}
         
+        # Ужесточаем фильтр объёма при FLAT BTC
+        if flat_mode:
+            if volume_data['volume_signal'] not in ["STRONG", "ABOVE"] or volume_data['volume_ratio'] < 1.5:
+                return {"side": "NO SIGNAL", "btc_context": btc_context}
+        else:
+            if volume_data['volume_signal'] == "WEAK":
+                return {"side": "NO SIGNAL", "btc_context": btc_context}
+
         df_15m = results['15m']['df']
         patterns, pattern_signal = detect_candle_patterns(df_15m)
         if final_side == "LONG" and pattern_signal == "BEARISH":
             return {"side": "NO SIGNAL", "btc_context": btc_context}
         if final_side == "SHORT" and pattern_signal == "BULLISH":
             return {"side": "NO SIGNAL", "btc_context": btc_context}
+
+        # Проверка дивергенций RSI
+        df_1h = results['1h']['df']
+        divergence = detect_rsi_divergence(df_1h, window=5)
         
+        # Дивергенция подтверждает сигнал - повышаем уверенность
+        divergence_confirms = False
+        if final_side == "LONG" and divergence == "BULLISH_DIVERGENCE":
+            divergence_confirms = True
+        if final_side == "SHORT" and divergence == "BEARISH_DIVERGENCE":
+            divergence_confirms = True
+        
+        # При FLAT BTC требуем подтверждение дивергенцией
+        if flat_mode and not divergence_confirms:
+            logger.debug(f"{symbol}: FLAT режим, дивергенция не подтверждает")
+            return {"side": "NO SIGNAL", "btc_context": btc_context}
+
         supports, resistances = find_support_resistance(df_1h)
         liq_above, liq_below = find_liquidity_levels(df_1h)
-        
+
         last_1h = results['1h']['last']
         trade_plan = build_advanced_trade_plan(last_1h['close'], last_1h['ATR'], final_side)
-        
+
         return {
             "symbol": symbol,
             "side": final_side,
@@ -451,6 +532,7 @@ def analyze_symbol(symbol, timeframes, btc_context):
             "ema20": last_1h['EMA20'],
             "ema50": last_1h['EMA50'],
             "ema200": last_1h['EMA200'],
+            "atr": last_1h['ATR'],
             "tf_1d": side_1d,
             "tf_4h": side_4h,
             "tf_1h": side_1h,
@@ -463,9 +545,11 @@ def analyze_symbol(symbol, timeframes, btc_context):
             "resistances": resistances,
             "liq_above": liq_above,
             "liq_below": liq_below,
+            "divergence": divergence,
+            "divergence_confirms": divergence_confirms,
             **trade_plan
         }
-        
+
     except Exception as e:
         logger.error(f"Ошибка анализа {symbol}: {e}")
         return {"side": "NO SIGNAL", "btc_context": "ERROR"}
@@ -499,14 +583,15 @@ def format_signal(signal_data):
     """Форматирует сигнал для отправки в Telegram"""
     if not signal_data or signal_data.get("side") == "NO SIGNAL":
         return None
-    
+
     symbol = signal_data.get("symbol", "Unknown")
     side = signal_data.get("side", "UNKNOWN")
     price = signal_data.get("current_price", 0)
-    
+    atr = signal_data.get("atr", 0)
+
     # Эмодзи направления
     side_emoji = "📈" if side == "LONG" else "📉"
-    
+
     # Форматируем уровни
     entry_min = signal_data.get("entry_min", 0)
     entry_max = signal_data.get("entry_max", 0)
@@ -515,7 +600,7 @@ def format_signal(signal_data):
     tp1 = signal_data.get("tp1", 0)
     tp2 = signal_data.get("tp2", 0)
     tp3 = signal_data.get("tp3", 0)
-    
+
     # Индикаторы
     rsi = signal_data.get("rsi", 0)
     adx = signal_data.get("adx", 0)
@@ -523,26 +608,48 @@ def format_signal(signal_data):
     ema50 = signal_data.get("ema50", 0)
     ema200 = signal_data.get("ema200", 0)
     
+    # ATR в процентах для волатильности
+    atr_percent = (atr / price * 100) if price > 0 and atr else 0
+
     # Таймфреймы
     tf_1d = signal_data.get("tf_1d", "")
     tf_4h = signal_data.get("tf_4h", "")
     tf_1h = signal_data.get("tf_1h", "")
     tf_30m = signal_data.get("tf_30m", "")
     tf_15m = signal_data.get("tf_15m", "")
-    
+
     # BTC контекст
     btc_context = signal_data.get("btc_context", "UNKNOWN")
     btc_emoji = "🔥" if btc_context == "TRENDING" else "😴"
-    
+
     # Объём
     volume_data = signal_data.get("volume_data", {})
     volume_emoji = volume_data.get("volume_emoji", "📊")
     volume_ratio = volume_data.get("volume_ratio", 0)
-    
+
     # Паттерны
     patterns = signal_data.get("patterns", [])
     patterns_str = "\n".join(patterns) if patterns else "Нет паттернов"
     
+    # Дивергенции
+    divergence = signal_data.get("divergence", "NO_DIVERGENCE")
+    divergence_confirms = signal_data.get("divergence_confirms", False)
+    if divergence == "BULLISH_DIVERGENCE":
+        divergence_str = "🟢 Бычья дивергенция"
+    elif divergence == "BEARISH_DIVERGENCE":
+        divergence_str = "🔴 Медвежья дивергенция"
+    else:
+        divergence_str = "➖ Нет дивергенций"
+    
+    if divergence_confirms:
+        divergence_str += " ✅"
+    
+    # Расчёт RR для TP1
+    if side == "LONG":
+        rr_tp1 = (tp1 - price) / (price - stop_loss) if price != stop_loss else 0
+    else:
+        rr_tp1 = (price - tp1) / (stop_loss - price) if stop_loss != price else 0
+
     # Формируем сообщение
     message = f"""
 {side_emoji} *{symbol}* - {side}
@@ -552,13 +659,14 @@ def format_signal(signal_data):
 📈 *EMA20:* {ema20:.2f}
 📈 *EMA50:* {ema50:.2f}
 📈 *EMA200:* {ema200:.2f}
+📉 *ATR:* {atr:.4f} ({atr_percent:.2f}%)
 
 🎯 *Точка входа:* ${entry_min:.2f} - ${entry_max:.2f}
 🛑 *Stop Loss:* ${stop_loss:.2f}
 ❌ *Invalidation:* ${invalidation:.2f}
 
 📌 *Take Profit:*
-  TP1: ${tp1:.2f}
+  TP1: ${tp1:.2f} (RR {rr_tp1:.2f})
   TP2: ${tp2:.2f}
   TP3: ${tp3:.2f}
 
@@ -571,11 +679,12 @@ def format_signal(signal_data):
 
 🌍 *BTC контекст:* {btc_emoji} {btc_context}
 📊 *Объём:* {volume_emoji} x{volume_ratio:.2f}
+🔀 *Дивергенции:* {divergence_str}
 
 🔍 *Паттерны:*
 {patterns_str}
 
 ⚠️ *Не забывайте про риск-менеджмент!*
 """
-    
+
     return message

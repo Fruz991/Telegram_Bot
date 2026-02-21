@@ -50,6 +50,27 @@ bot = Bot(token=TOKEN, session=session)
 dp = Dispatcher()
 signal_cooldown = {}
 pending_signal = {}
+last_signals = {}  # Хранение последних сигналов: {symbol: {"side": "...", "time": timestamp}}
+
+# =====================================================
+# ПРОВЕРКА НА ДУПЛИКАТЫ СИГНАЛОВ
+# =====================================================
+SIGNAL_DUPLICATE_WINDOW = 3600  # 1 час - не показывать тот же сигнал по той же монете
+
+def is_duplicate_signal(symbol: str, side: str) -> bool:
+    """Проверяет, не был ли уже отправлен такой же сигнал недавно"""
+    now = time.time()
+    if symbol in last_signals:
+        last_signal = last_signals[symbol]
+        # Если тот же direction и не прошло достаточно времени
+        if last_signal["side"] == side:
+            if now - last_signal["time"] < SIGNAL_DUPLICATE_WINDOW:
+                return True
+    return False
+
+def update_last_signal(symbol: str, side: str):
+    """Обновляет время последнего сигнала по монете"""
+    last_signals[symbol] = {"side": side, "time": time.time()}
 
 # =====================================================
 # ПРОВЕРКА ДОСТУПА
@@ -112,30 +133,37 @@ async def send_signal(message: types.Message):
     if not tracker.can_trade():
         await message.reply("🚫 Лимит на сегодня достигнут. Иди отдыхай.")
         return
-    
+
     await message.reply("🔍 Анализирую рынок и проверяю новости...")
-    
+
     news_blocking = await check_news_blocking()
     if news_blocking:
         await message.reply("⚠️ Важные новости в ближайшие 30-60 минут. Торговля не рекомендуется.")
         logger.warning("Сигнал отменён из-за новостей")
         return
-    
+
     now = time.time()
     btc_context = await get_btc_context_cached()
-    
+
     for symbol in SYMBOLS:
         if symbol in signal_cooldown:
             if now - signal_cooldown[symbol] < COOLDOWN_SECONDS:
                 continue
-        
+
         signal = await analyze_all_timeframes_async(symbol, btc_context)
         if signal['side'] != "NO SIGNAL":
+            # Проверка на дубликат
+            if is_duplicate_signal(symbol, signal['side']):
+                logger.info(f"Сигнал {symbol} {signal['side']} пропущен (дубликат)")
+                signal_cooldown[symbol] = now
+                continue
+            
             signal_cooldown[symbol] = now
+            update_last_signal(symbol, signal['side'])
             await message.reply(format_signal(signal))
             logger.info(f"Сигнал найден: {symbol} {signal['side']}")
             return
-    
+
     await message.reply("⏳ Сигналов сейчас нет. Бот продолжает мониторинг 24/7.")
     logger.debug("Сигналов не найдено по команде /signal")
 
@@ -171,29 +199,36 @@ async def send_best_signal(callback: types.CallbackQuery):
     if not tracker.can_trade():
         await callback.answer("🚫 Лимит на сегодня достигнут. Иди отдыхай.", show_alert=True)
         return
-    
+
     await callback.answer("🔍 Анализирую рынок...")
-    
+
     news_blocking = await check_news_blocking()
     if news_blocking:
         await callback.message.answer("⚠️ Важные новости в ближайшие 30-60 минут. Торговля не рекомендуется.")
         return
-    
+
     now = time.time()
     btc_context = await get_btc_context_cached()
-    
+
     for symbol in SYMBOLS:
         if symbol in signal_cooldown:
             if now - signal_cooldown[symbol] < COOLDOWN_SECONDS:
                 continue
-        
+
         signal = await analyze_all_timeframes_async(symbol, btc_context)
         if signal['side'] != "NO SIGNAL":
+            # Проверка на дубликат
+            if is_duplicate_signal(symbol, signal['side']):
+                logger.info(f"Сигнал {symbol} {signal['side']} пропущен (дубликат)")
+                signal_cooldown[symbol] = now
+                continue
+            
             signal_cooldown[symbol] = now
+            update_last_signal(symbol, signal['side'])
             await callback.message.answer(format_signal(signal))
             logger.info(f"Сигнал найден через callback: {symbol}")
             return
-    
+
     await callback.message.answer("⏳ Сейчас нет сильных сигналов. Бот продолжает мониторинг 24/7.")
 
 @dp.callback_query(F.data == "get_pending_signal")
@@ -256,34 +291,41 @@ async def auto_scan():
                 logger.warning("Лимит стопов достигнут, пауза 1 час")
                 await asyncio.sleep(3600)
                 continue
-            
+
             news_blocking = await check_news_blocking()
             if news_blocking:
                 logger.warning("Новости обнаружены, пропускаем скан")
                 await asyncio.sleep(SCAN_INTERVAL_SECONDS)
                 continue
-            
+
             now = time.time()
             signals_found = 0
             btc_context = await get_btc_context_cached()
-            
+
             if btc_context == "FLAT":
                 logger.info("BTC во флэте, снижаем активность")
-            
+
             for symbol in SYMBOLS:
                 if symbol in signal_cooldown:
                     if now - signal_cooldown[symbol] < COOLDOWN_SECONDS:
                         continue
-                
+
                 signal = await analyze_all_timeframes_async(symbol, btc_context)
-                
+
                 if signal['side'] != "NO SIGNAL":
+                    # Проверка на дубликат
+                    if is_duplicate_signal(symbol, signal['side']):
+                        logger.info(f"Сигнал {symbol} {signal['side']} пропущен (дубликат)")
+                        signal_cooldown[symbol] = now
+                        continue
+                    
                     signal_cooldown[symbol] = now
+                    update_last_signal(symbol, signal['side'])
                     pending_signal["signal"] = signal
                     symbol_fmt = signal['symbol'].replace('/', '')
                     side = signal['side']
                     emoji = "📈" if side == "LONG" else "📉"
-                    
+
                     await bot.send_message(
                         OWNER_ID,
                         f"🔔 Появилась возможность для входа в позицию!\n"
@@ -295,12 +337,12 @@ async def auto_scan():
                     signals_found += 1
                     logger.info(f"Сигнал найден: {symbol_fmt} {side}")
                     await asyncio.sleep(5)
-            
+
             if signals_found == 0:
                 logger.debug("Сигналов не найдено в этом цикле")
-            
+
             await asyncio.sleep(SCAN_INTERVAL_SECONDS)
-            
+
         except Exception as e:
             logger.error(f"Ошибка автоскана: {e}")
             await asyncio.sleep(SCAN_INTERVAL_SECONDS)
