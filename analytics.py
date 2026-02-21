@@ -12,6 +12,7 @@ import pytz
 from datetime import datetime, timezone, timedelta
 from config import TIMEFRAMES, FMP_API_KEY, FMP_CHECK_MINUTES, FMP_IMPACT_FILTER
 from config import RSS_CHECK_MINUTES, RSS_FEEDS, RSS_KEYWORDS
+from macro_tracker import macro_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -403,43 +404,69 @@ def analyze_timeframe(df):
         return "NO SIGNAL", last
 
 # =====================================================
-# КОНТЕКСТ BTC
+# КОНТЕКСТ BTC + МАКРО
 # =====================================================
 btc_context_cache = {"value": "TRENDING", "timestamp": 0}
 
 async def get_btc_context_cached():
+    """Возвращает только BTC контекст (для обратной совместимости)"""
     global btc_context_cache
     now = datetime.now().timestamp()
-    
+
     if now - btc_context_cache["timestamp"] < 600:
         return btc_context_cache["value"]
-    
+
     try:
         ohlcv = exchange.fetch_ohlcv("BTC/USDT", timeframe='1h', limit=50)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['EMA20'] = df['close'].ewm(span=20).mean()
         df['EMA50'] = df['close'].ewm(span=50).mean()
         last = df.iloc[-1]
-        
+
         ema_diff_pct = abs(last['EMA20'] - last['EMA50']) / last['EMA50'] * 100
-        
+
         if ema_diff_pct < 0.5:
             result = "FLAT"
         else:
             result = "TRENDING"
-        
+
         btc_context_cache = {"value": result, "timestamp": now}
         logger.info(f"BTC контекст обновлён: {result}")
         return result
-        
+
     except Exception as e:
         logger.error(f"Ошибка BTC контекста: {e}")
         return "TRENDING"
 
+async def get_market_context_cached():
+    """Возвращает полный контекст: BTC + Макро (DXY + SPX)"""
+    btc_context = await get_btc_context_cached()
+    macro_context = macro_tracker.get_market_context()
+    
+    return {
+        "btc": btc_context,
+        "macro": macro_context
+    }
+
 # =====================================================
 # АНАЛИЗ МОНЕТЫ
 # =====================================================
-def analyze_symbol(symbol, timeframes, btc_context):
+def analyze_symbol(symbol, timeframes, market_context):
+    """
+    Анализирует монету с учётом макро контекста
+    
+    market_context может быть:
+    - строкой ("TRENDING"/"FLAT") для обратной совместимости
+    - словарём {"btc": "...", "macro": {...}}
+    """
+    # Обрабатываем старый формат (для совместимости)
+    if isinstance(market_context, str):
+        btc_context = market_context
+        macro_context = None
+    else:
+        btc_context = market_context.get("btc", "TRENDING")
+        macro_context = market_context.get("macro", None)
+    
     try:
         if symbol == "BTC/USDT":
             btc_context = "TRENDING"
@@ -523,7 +550,8 @@ def analyze_symbol(symbol, timeframes, btc_context):
         last_1h = results['1h']['last']
         trade_plan = build_advanced_trade_plan(last_1h['close'], last_1h['ATR'], final_side)
 
-        return {
+        # Формируем базовый сигнал
+        signal = {
             "symbol": symbol,
             "side": final_side,
             "current_price": last_1h['close'],
@@ -549,6 +577,12 @@ def analyze_symbol(symbol, timeframes, btc_context):
             "divergence_confirms": divergence_confirms,
             **trade_plan
         }
+        
+        # Добавляем макро данные если есть
+        if macro_context:
+            signal["macro"] = macro_context
+        
+        return signal
 
     except Exception as e:
         logger.error(f"Ошибка анализа {symbol}: {e}")
@@ -649,6 +683,33 @@ def format_signal(signal_data):
         rr_tp1 = (tp1 - price) / (price - stop_loss) if price != stop_loss else 0
     else:
         rr_tp1 = (price - tp1) / (stop_loss - price) if stop_loss != price else 0
+    
+    # Макро данные
+    macro = signal_data.get("macro", {})
+    spx = macro.get("spx", {})
+    dxy = macro.get("dxy", {})
+    crypto_impact = macro.get("crypto_impact", "NEUTRAL")
+    
+    spx_emoji = {"STRONG": "🟢", "WEAK": "🔴", "FLAT": "😐", "ERROR": "⚠️"}
+    dxy_emoji = {"STRONG": "🔴", "WEAK": "🟢", "FLAT": "😐", "ERROR": "⚠️"}
+    
+    spx_str = "Нет данных"
+    dxy_str = "Нет данных"
+    
+    if spx.get("value"):
+        spx_change = spx.get("change", 0)
+        spx_str = f"{spx_emoji.get(spx.get('trend', 'FLAT'), '😐')} {spx['value']:.2f} ({spx_change:+.2f}%)"
+    
+    if dxy.get("value"):
+        dxy_change = dxy.get("change", 0)
+        dxy_str = f"{dxy_emoji.get(dxy.get('trend', 'FLAT'), '😐')} {dxy['value']:.2f} ({dxy_change:+.2f}%)"
+    
+    impact_emoji = {"BULLISH": "🟢", "BEARISH": "🔴", "NEUTRAL": "😐"}
+    impact_str = {
+        "BULLISH": "Благоприятно для крипты",
+        "BEARISH": "Давление на крипту",
+        "NEUTRAL": "Нейтрально"
+    }
 
     # Формируем сообщение
     message = f"""
@@ -678,6 +739,9 @@ def format_signal(signal_data):
   15m: {tf_emoji(tf_15m)} {tf_15m}
 
 🌍 *BTC контекст:* {btc_emoji} {btc_context}
+🏛 *S&P 500:* {spx_str}
+💵 *DXY:* {dxy_str}
+🔀 *Влияние:* {impact_emoji.get(crypto_impact, '😐')} {impact_str.get(crypto_impact, 'Нейтрально')}
 📊 *Объём:* {volume_emoji} x{volume_ratio:.2f}
 🔀 *Дивергенции:* {divergence_str}
 

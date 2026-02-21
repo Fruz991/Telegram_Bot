@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from config import SYMBOLS, COOLDOWN_SECONDS, SCAN_INTERVAL_SECONDS
 from tracker import tracker
 from keyboards import signal_keyboard
-from analytics import analyze_all_timeframes_async, format_signal, check_news_blocking, get_btc_context_cached
+from analytics import analyze_all_timeframes_async, format_signal, check_news_blocking, get_market_context_cached
 
 
 # =====================================================
@@ -143,14 +143,14 @@ async def send_signal(message: types.Message):
         return
 
     now = time.time()
-    btc_context = await get_btc_context_cached()
+    market_context = await get_market_context_cached()
 
     for symbol in SYMBOLS:
         if symbol in signal_cooldown:
             if now - signal_cooldown[symbol] < COOLDOWN_SECONDS:
                 continue
 
-        signal = await analyze_all_timeframes_async(symbol, btc_context)
+        signal = await analyze_all_timeframes_async(symbol, market_context)
         if signal['side'] != "NO SIGNAL":
             # Проверка на дубликат
             if is_duplicate_signal(symbol, signal['side']):
@@ -208,14 +208,14 @@ async def send_best_signal(callback: types.CallbackQuery):
         return
 
     now = time.time()
-    btc_context = await get_btc_context_cached()
+    market_context = await get_market_context_cached()
 
     for symbol in SYMBOLS:
         if symbol in signal_cooldown:
             if now - signal_cooldown[symbol] < COOLDOWN_SECONDS:
                 continue
 
-        signal = await analyze_all_timeframes_async(symbol, btc_context)
+        signal = await analyze_all_timeframes_async(symbol, market_context)
         if signal['side'] != "NO SIGNAL":
             # Проверка на дубликат
             if is_duplicate_signal(symbol, signal['side']):
@@ -300,8 +300,9 @@ async def auto_scan():
 
             now = time.time()
             signals_found = 0
-            btc_context = await get_btc_context_cached()
+            market_context = await get_market_context_cached()
 
+            btc_context = market_context["btc"]
             if btc_context == "FLAT":
                 logger.info("BTC во флэте, снижаем активность")
 
@@ -310,7 +311,7 @@ async def auto_scan():
                     if now - signal_cooldown[symbol] < COOLDOWN_SECONDS:
                         continue
 
-                signal = await analyze_all_timeframes_async(symbol, btc_context)
+                signal = await analyze_all_timeframes_async(symbol, market_context)
 
                 if signal['side'] != "NO SIGNAL":
                     # Проверка на дубликат
