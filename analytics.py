@@ -9,7 +9,6 @@ import pandas as pd
 import numpy as np
 import ta
 import pytz
-from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
 from config import TIMEFRAMES, FMP_API_KEY, FMP_CHECK_MINUTES, FMP_IMPACT_FILTER
 from config import RSS_CHECK_MINUTES, RSS_FEEDS, RSS_KEYWORDS
@@ -20,14 +19,15 @@ logger = logging.getLogger(__name__)
 # IPv4
 # =====================================================
 original_getaddrinfo = socket.getaddrinfo
+
 def getaddrinfo_ipv4(*args, **kwargs):
     return [x for x in original_getaddrinfo(*args, **kwargs) if x[0].name == 'AF_INET']
+
 socket.getaddrinfo = getaddrinfo_ipv4
 
 # =====================================================
 # БИРЖА
 # =====================================================
-load_dotenv()
 exchange = ccxt.bybit({
     "apiKey": os.getenv("BYBIT_API_KEY"),
     "secret": os.getenv("BYBIT_API_SECRET"),
@@ -540,58 +540,9 @@ async def analyze_all_timeframes_async(symbol, btc_context=None):
 # ФОРМАТИРОВАНИЕ
 # =====================================================
 def tf_emoji(side):
-    if side == "LONG": return "📈"
-    if side == "SHORT": return "📉"
-    return "⬜"
-
-def format_signal(signal):
-    if signal['side'] == "NO SIGNAL":
-        return "⏳ Сигналов сейчас нет"
-    
-    symbol_fmt = signal['symbol'].replace('/', '')
-    side = signal['side']
-    emoji = "📈" if side == "LONG" else "📉"
-    vol = signal['volume_data']
-    btc_status = "🟢 Трендует" if signal['btc_context'] == "TRENDING" else "🔴 Во флэте"
-    patterns_text = "\n".join(signal['patterns']) if signal['patterns'] else "—"
-    supports_text = " | ".join([f"{p:.4f}" for _, p in signal['supports']]) if signal['supports'] else "—"
-    resistances_text = " | ".join([f"{p:.4f}" for _, p in signal['resistances']]) if signal['resistances'] else "—"
-    liq_above_text = " | ".join([f"{p:.4f}" for p in signal['liq_above']]) if signal['liq_above'] else "—"
-    liq_below_text = " | ".join([f"{p:.4f}" for p in signal['liq_below']]) if signal['liq_below'] else "—"
-    
-    return f"""
-🚨 TRADE PLAN | {symbol_fmt} | {side}
-{emoji} Подтверждение таймфреймов:
-1D: {tf_emoji(signal['tf_1d'])}  4H: {tf_emoji(signal['tf_4h'])}  1H: {tf_emoji(signal['tf_1h'])}  30M: {tf_emoji(signal['tf_30m'])}  15M: {tf_emoji(signal['tf_15m'])}
-₿ BTC: {btc_status}
-
-💰 Зона набора:
-{signal['entry_min']:.4f} — {signal['entry_max']:.4f}
-
-🛑 Стоп-лосс:
-{signal['stop_loss']:.4f}
-
-❌ Отмена идеи:
-H1 close {'<' if side == 'LONG' else '>'} {signal['invalidation']:.4f}
-
-🎯 Тейки:
-TP1: {signal['tp1']:.4f}  (25%)
-TP2: {signal['tp2']:.4f}  (50%) — RR 1:2
-TP3: {signal['tp3']:.4f}  (25%) — RR 1:3
-
-📊 Индикаторы:
-RSI: {signal['rsi']:.1f}   ADX: {signal['adx']:.1f}
-EMA20: {signal['ema20']:.4f}
-EMA50: {signal['ema50']:.4f}
-EMA200: {signal['ema200']:.4f}
-
-📦 Объём: {vol['volume_emoji']} x{vol['volume_ratio']:.1f}
-🕯 Паттерны:
-{patterns_text}
-🏛 Поддержки: {supports_text}
-🏛 Сопротивления: {resistances_text}
-💧 Ликвидность выше: {liq_above_text}
-💧 Ликвидность ниже: {liq_below_text}
-
-💵 Цена: {signal['current_price']:.4f}
-"""
+    if side == "LONG":
+        return "📈"
+    elif side == "SHORT":
+        return "📉"
+    else:
+        return "➖"
