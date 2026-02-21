@@ -11,6 +11,21 @@ from config import SYMBOLS, COOLDOWN_SECONDS, SCAN_INTERVAL_SECONDS
 from tracker import tracker
 from keyboards import signal_keyboard
 from analytics import analyze_all_timeframes_async, format_signal, check_news_blocking, get_btc_context_cached
+import logging
+import sys
+
+# Удаляем все существующие обработчики
+root_logger = logging.getLogger()
+root_logger.handlers = []
+
+# Настраиваем простой белый текст
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+
 
 # =====================================================
 # ЛОГИРОВАНИЕ
