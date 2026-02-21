@@ -20,10 +20,11 @@ class MacroTracker:
         
         self.base_url = "https://api.twelvedata.com"
         self.cache = {
-            "spx": {"value": None, "trend": "FLAT", "timestamp": 0},
-            "dxy": {"value": None, "trend": "FLAT", "timestamp": 0},
+            "spx": {"value": None, "trend": "FLAT", "timestamp": 0, "error_count": 0},
+            "dxy": {"value": None, "trend": "FLAT", "timestamp": 0, "error_count": 0},
         }
-        self.cache_duration = 600  # 10 минут
+        self.cache_duration = 1800  # 30 минут (для экономии лимита 800 запросов/день)
+        self.max_retries = 3  # Максимум ошибок перед паузой
     
     def get_time_series(self, symbol, interval="1h", outputsize=50):
         """Получает исторические данные"""
@@ -103,52 +104,82 @@ class MacroTracker:
     def get_spx_cached(self):
         """Кэш для SPX"""
         now = datetime.now().timestamp()
-        if now - self.cache["spx"]["timestamp"] < self.cache_duration:
-            return self.cache["spx"]
+        cache_age = now - self.cache["spx"]["timestamp"]
         
+        # Если много ошибок — увеличиваем паузу
+        if self.cache["spx"]["error_count"] >= self.max_retries:
+            if cache_age < 1800:  # 30 минут пауза после ошибок
+                logger.debug(f"SPX: пауза после ошибок (остаток {1800 - cache_age:.0f} сек)")
+                return self.cache["spx"]
+            else:
+                self.cache["spx"]["error_count"] = 0  # Сброс после паузы
+        
+        if cache_age < self.cache_duration:
+            logger.debug(f"SPX: возвращаем кэш (возраст {cache_age:.0f} сек)")
+            return self.cache["spx"]
+
+        logger.info("SPX: обновляем данные...")
         df = self.get_spx_data()
         if df is None or len(df) == 0:
-            return {"value": None, "trend": "ERROR", "change": 0}
-        
+            self.cache["spx"]["error_count"] += 1
+            logger.warning(f"SPX: не удалось получить данные (ошибок: {self.cache['spx']['error_count']})")
+            return {"value": None, "trend": "ERROR", "change": 0, "error_count": self.cache["spx"]["error_count"]}
+
         trend = self.analyze_trend(df)
         last_value = df.iloc[-1]['close']
         prev_value = df.iloc[-2]['close'] if len(df) > 1 else last_value
         change = ((last_value - prev_value) / prev_value) * 100
-        
+
         self.cache["spx"] = {
             "value": last_value,
             "trend": trend,
             "change": change,
             "df": df,
-            "timestamp": now
+            "timestamp": now,
+            "error_count": 0
         }
-        
+
         logger.info(f"SPY (S&P 500) обновлён: {last_value:.2f} ({trend}, {change:+.2f}%)")
         return self.cache["spx"]
     
     def get_dxy_cached(self):
         """Кэш для DXY"""
         now = datetime.now().timestamp()
-        if now - self.cache["dxy"]["timestamp"] < self.cache_duration:
-            return self.cache["dxy"]
+        cache_age = now - self.cache["dxy"]["timestamp"]
         
+        # Если много ошибок — увеличиваем паузу
+        if self.cache["dxy"]["error_count"] >= self.max_retries:
+            if cache_age < 1800:  # 30 минут пауза после ошибок
+                logger.debug(f"DXY: пауза после ошибок (остаток {1800 - cache_age:.0f} сек)")
+                return self.cache["dxy"]
+            else:
+                self.cache["dxy"]["error_count"] = 0  # Сброс после паузы
+        
+        if cache_age < self.cache_duration:
+            logger.debug(f"DXY: возвращаем кэш (возраст {cache_age:.0f} сек)")
+            return self.cache["dxy"]
+
+        logger.info("DXY: обновляем данные...")
         df = self.get_dxy_data()
         if df is None or len(df) == 0:
-            return {"value": None, "trend": "ERROR", "change": 0}
-        
+            self.cache["dxy"]["error_count"] += 1
+            logger.warning(f"DXY: не удалось получить данные (ошибок: {self.cache['dxy']['error_count']})")
+            return {"value": None, "trend": "ERROR", "change": 0, "error_count": self.cache["dxy"]["error_count"]}
+
         trend = self.analyze_trend(df)
         last_value = df.iloc[-1]['close']
         prev_value = df.iloc[-2]['close'] if len(df) > 1 else last_value
         change = ((last_value - prev_value) / prev_value) * 100
-        
+
         self.cache["dxy"] = {
             "value": last_value,
             "trend": trend,
             "change": change,
             "df": df,
-            "timestamp": now
+            "timestamp": now,
+            "error_count": 0
         }
-        
+
         logger.info(f"UUP (DXY) обновлён: {last_value:.2f} ({trend}, {change:+.2f}%)")
         return self.cache["dxy"]
     
@@ -170,6 +201,8 @@ class MacroTracker:
         dxy = self.get_dxy_cached()
         crypto_impact = self.get_crypto_impact(spx, dxy)
         
+        logger.info(f"Макро: SPX {spx.get('value', 'N/A'):.2f} ({spx.get('trend', 'N/A')}), DXY {dxy.get('value', 'N/A'):.2f} ({dxy.get('trend', 'N/A')})")
+
         return {
             "spx": spx,
             "dxy": dxy,

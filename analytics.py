@@ -2,6 +2,7 @@ import asyncio
 import os
 import socket
 import logging
+import time
 import aiohttp
 import ccxt
 import pandas as pd
@@ -44,6 +45,27 @@ exchange = ccxt.bybit({
         "adjustForTimeDifference": True
     }
 })
+
+# =====================================================
+# КЭШ ДЛЯ OHLCV ДАННЫХ
+# =====================================================
+ohlcv_cache = {}
+ohlcv_cache_duration = 60  # 1 минута - достаточно для стабильности
+
+def get_ohlcv_cached(symbol, timeframe, limit=250):
+    """Кэширует запросы к бирже для экономии лимитов"""
+    now = time.time()
+    cache_key = f"{symbol}_{timeframe}"
+    
+    if cache_key in ohlcv_cache:
+        cache_data = ohlcv_cache[cache_key]
+        if now - cache_data["timestamp"] < ohlcv_cache_duration:
+            return cache_data["data"]
+    
+    # Запрос к бирже
+    ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+    ohlcv_cache[cache_key] = {"data": ohlcv, "timestamp": now}
+    return ohlcv
 
 # =====================================================
 # ТОРГОВЫЙ ПЛАН
@@ -357,11 +379,11 @@ async def get_btc_context_cached():
     global btc_context_cache
     now = datetime.now().timestamp()
 
-    if now - btc_context_cache["timestamp"] < 600:
+    if now - btc_context_cache["timestamp"] < 300:  # 5 минут
         return btc_context_cache["value"]
 
     try:
-        ohlcv = exchange.fetch_ohlcv("BTC/USDT", timeframe='1h', limit=50)
+        ohlcv = get_ohlcv_cached("BTC/USDT", timeframe='1h', limit=50)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['EMA20'] = df['close'].ewm(span=20).mean()
         df['EMA50'] = df['close'].ewm(span=50).mean()
@@ -458,11 +480,11 @@ def analyze_symbol(symbol, timeframes, market_context):
         
         results = {}
         for tf in timeframes:
-            ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf, limit=250)
+            ohlcv = get_ohlcv_cached(symbol, timeframe=tf, limit=250)
             if not ohlcv or len(ohlcv) < 50:
                 logger.warning(f"Недостаточно данных для {symbol} {tf}")
                 return {"side": "NO SIGNAL", "btc_context": btc_context}
-            
+
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             side, last = analyze_timeframe(df)
             results[tf] = {"side": side, "last": last, "df": df}
