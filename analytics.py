@@ -393,12 +393,47 @@ async def get_market_context_cached():
     }
 
 # =====================================================
+# МАКРО НАПРАВЛЕНИЕ РЫНКА
+# =====================================================
+def get_macro_bias(macro_context):
+    """
+    Определяет макро уклон рынка на основе DXY и SPX
+    
+    Логика (вспомогательный фильтр — только сильные тренды):
+    - DXY сильно растёт (STRONG) + SPX сильно падает (WEAK) = медвежий уклон 📉
+    - DXY сильно падает (WEAK) + SPX сильно растёт (STRONG) = бычий уклон 📈
+    - Иначе = нейтрально (не блокируем сигналы)
+    
+    Возвращает: "LONG", "SHORT", "NEUTRAL"
+    """
+    if not macro_context:
+        return "NEUTRAL"
+    
+    spx = macro_context.get("spx", {})
+    dxy = macro_context.get("dxy", {})
+    
+    spx_trend = spx.get("trend", "FLAT")
+    dxy_trend = dxy.get("trend", "FLAT")
+    
+    # Проверяем только сильные тренды по обоим индикаторам
+    # Бычий сценарий: SPX растёт (STRONG) + DXY падает (WEAK)
+    if spx_trend == "STRONG" and dxy_trend == "WEAK":
+        return "LONG"
+    
+    # Медвежий сценарий: SPX падает (WEAK) + DXY растёт (STRONG)
+    if spx_trend == "WEAK" and dxy_trend == "STRONG":
+        return "SHORT"
+    
+    # Все остальные случаи — нейтрально (не блокируем)
+    return "NEUTRAL"
+
+# =====================================================
 # АНАЛИЗ МОНЕТЫ
 # =====================================================
 def analyze_symbol(symbol, timeframes, market_context):
     """
     Анализирует монету с учётом макро контекста
-    
+
     market_context может быть:
     - строкой ("TRENDING"/"FLAT") для обратной совместимости
     - словарём {"btc": "...", "macro": {...}}
@@ -410,13 +445,16 @@ def analyze_symbol(symbol, timeframes, market_context):
     else:
         btc_context = market_context.get("btc", "TRENDING")
         macro_context = market_context.get("macro", None)
-    
+
     try:
         if symbol == "BTC/USDT":
             btc_context = "TRENDING"
 
         # При FLAT BTC ужесточаем фильтры вместо рандома
         flat_mode = btc_context == "FLAT"
+        
+        # Получаем макро уклон
+        macro_bias = get_macro_bias(macro_context)
         
         results = {}
         for tf in timeframes:
@@ -452,6 +490,11 @@ def analyze_symbol(symbol, timeframes, market_context):
         final_side = side_1d
 
         if final_side != allowed_direction:
+            return {"side": "NO SIGNAL", "btc_context": btc_context}
+        
+        # Проверка макро уклона — блокируем сигналы против макро
+        if macro_bias != "NEUTRAL" and final_side != macro_bias:
+            logger.debug(f"{symbol}: Сигнал против макро уклона ({macro_bias}), пропуск")
             return {"side": "NO SIGNAL", "btc_context": btc_context}
 
         df_1h = results['1h']['df']
@@ -634,6 +677,15 @@ def format_signal(signal_data):
     dxy = macro.get("dxy", {})
     crypto_impact = macro.get("crypto_impact", "NEUTRAL")
     
+    # Макро уклон
+    macro_bias = get_macro_bias(macro) if macro else "NEUTRAL"
+    bias_emoji = {"LONG": "📈", "SHORT": "📉", "NEUTRAL": "➖"}
+    bias_str = {
+        "LONG": "Бычий (SPX↑ + DXY↓)",
+        "SHORT": "Медвежий (SPX↓ + DXY↑)",
+        "NEUTRAL": "Нейтральный"
+    }
+
     spx_emoji = {"STRONG": "🟢", "WEAK": "🔴", "FLAT": "😐", "ERROR": "⚠️"}
     dxy_emoji = {"STRONG": "🔴", "WEAK": "🟢", "FLAT": "😐", "ERROR": "⚠️"}
     
@@ -683,6 +735,7 @@ def format_signal(signal_data):
   15m: {tf_emoji(tf_15m)} {tf_15m}
 
 🌍 *BTC контекст:* {btc_emoji} {btc_context}
+📊 *Макро уклон:* {bias_emoji.get(macro_bias, '➖')} {bias_str.get(macro_bias, 'Нейтральный')}
 🏛 *S&P 500:* {spx_str}
 💵 *DXY:* {dxy_str}
 🔀 *Влияние:* {impact_emoji.get(crypto_impact, '😐')} {impact_str.get(crypto_impact, 'Нейтрально')}
