@@ -14,17 +14,36 @@ from analytics import analyze_all_timeframes_async, format_signal, check_news_bl
 import logging
 import sys
 
-# Удаляем все существующие обработчики
+# Кастомный форматтер с цветами только для ошибок
+class SelectiveColorFormatter(logging.Formatter):
+    # ANSI escape коды
+    RED = '\033[91m'
+    RESET = '\033[0m'
+    BOLD = '\033[1m'
+    
+    def format(self, record):
+        # Сохраняем оригинальный уровень
+        original_levelname = record.levelname
+        
+        if record.levelno >= logging.ERROR:
+            # Для ERROR и CRITICAL — красный жирный
+            record.levelname = f"{self.BOLD}{self.RED}{record.levelname}{self.RESET}"
+        # Для INFO, WARNING, DEBUG — оставляем как есть (белый)
+        
+        return super().format(record)
+
+# Настраиваем логирование
 root_logger = logging.getLogger()
 root_logger.handlers = []
 
-# Настраиваем простой белый текст
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(SelectiveColorFormatter(
+    '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+))
+
+root_logger.addHandler(handler)
+root_logger.setLevel(logging.INFO)
 
 
 # =====================================================
