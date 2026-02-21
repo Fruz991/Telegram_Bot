@@ -19,7 +19,7 @@ SYMBOLS = [
     "BTC/USDT", "SOL/USDT", "ETH/USDT", "SUI/USDT", "LTC/USDT",
     "BNB/USDT", "WIF/USDT", "ADA/USDT", "ATOM/USDT",
     "ENA/USDT", "NEAR/USDT", "OP/USDT",
-    "AVAX/USDT", "LINK/USDT", "ZRO/USDT", "XRP/USDT", "FARTCOIN/USDT"
+    "AVAX/USDT", "LINK/USDT", "ZRO/USDT", "XRP/USDT",
 ]
 TIMEFRAMES = ['15m', '30m', '1h', '4h', '1d']
 COOLDOWN_SECONDS = 1800  # 30 минут между сигналами на одну монету
