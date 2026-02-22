@@ -171,72 +171,79 @@ def find_liquidity_levels(df, lookback=50):
     return liq_above, liq_below
 
 # =====================================================
-# ПАТТЕРНЫ СВЕЧЕЙ
+# ПАТТЕРНЫ СВЕЧЕЙ (НОВАЯ ВЕРСИЯ)
 # =====================================================
 def detect_candle_patterns(df):
+    """
+    Проверяет только сильное поглощение против тренда
+    """
     patterns = []
     last = df.iloc[-1]
     prev = df.iloc[-2]
-    
+
     body = abs(last['close'] - last['open'])
-    upper_shadow = last['high'] - max(last['close'], last['open'])
-    lower_shadow = min(last['close'], last['open']) - last['low']
-    total_range = last['high'] - last['low']
-    
-    if total_range == 0:
-        return patterns, "NEUTRAL"
-    
-    if lower_shadow >= body * 2 and upper_shadow <= body * 0.3 and last['close'] > last['open']:
-        patterns.append("🔨 Молот (бычий)")
-    if upper_shadow >= body * 2 and lower_shadow <= body * 0.3 and last['close'] < last['open']:
-        patterns.append("⭐ Падающая звезда (медвежий)")
-    if body <= total_range * 0.1:
-        patterns.append("➖ Доджи")
+    prev_body = abs(prev['close'] - prev['open'])
+
+    # Сильное бычье поглощение (тело последней свечи в 2+ раза больше предыдущей)
     if (last['close'] > last['open'] and prev['close'] < prev['open'] and
-        last['open'] < prev['close'] and last['close'] > prev['open']):
+        last['open'] < prev['close'] and last['close'] > prev['open'] and
+        body >= prev_body * 1.5):
         patterns.append("📈 Бычье поглощение")
+
+    # Сильное медвежье поглощение
     if (last['close'] < last['open'] and prev['close'] > prev['open'] and
-        last['open'] > prev['close'] and last['close'] < prev['open']):
+        last['open'] > prev['close'] and last['close'] < prev['open'] and
+        body >= prev_body * 1.5):
         patterns.append("📉 Медвежье поглощение")
-    if lower_shadow >= total_range * 0.6 and body <= total_range * 0.3:
-        patterns.append("📌 Пинбар (бычий)")
-    if upper_shadow >= total_range * 0.6 and body <= total_range * 0.3:
-        patterns.append("📌 Пинбар (медвежий)")
-    
-    bullish_count = sum(1 for p in patterns if any(w in p for w in ["бычий", "Молот", "Поглощение"]))
-    bearish_count = sum(1 for p in patterns if any(w in p for w in ["медвежий", "Звезда"]))
-    
-    if bullish_count > bearish_count:
-        pattern_signal = "BULLISH"
-    elif bearish_count > bullish_count:
-        pattern_signal = "BEARISH"
+
+    # Определяем сигнал
+    if len(patterns) > 0:
+        if "Бычье поглощение" in str(patterns):
+            pattern_signal = "BULLISH"
+        elif "Медвежье поглощение" in str(patterns):
+            pattern_signal = "BEARISH"
+        else:
+            pattern_signal = "NEUTRAL"
     else:
-        pattern_signal = "NEUTRAL"
-    
+        pattern_signal = "NEUTRAL"  # Нет паттернов - нейтрально
+
     return patterns, pattern_signal
 
 # =====================================================
-# ОБЪЁМ
+# ОБЪЁМ (НОВАЯ ВЕРСИЯ)
 # =====================================================
 def analyze_volume(df):
+    """
+    Анализирует объем с новой логикой:
+    - Объем > 90% от среднего ИЛИ
+    - Текущий объем > предыдущего
+    """
     avg_volume = df['volume'].rolling(20).mean().iloc[-1]
     last_volume = df['volume'].iloc[-1]
+    prev_volume = df['volume'].iloc[-2] if len(df) > 1 else last_volume
+    
     volume_ratio = last_volume / avg_volume if avg_volume > 0 else 1
+    volume_vs_prev = last_volume / prev_volume if prev_volume > 0 else 1
+    
+    # Новый критерий: объем > 90% среднего ИЛИ > предыдущего
+    volume_ok = volume_ratio >= 0.9 or volume_vs_prev >= 1.0
     
     if volume_ratio >= 1.5:
         volume_signal = "STRONG"
         volume_emoji = "🔥"
-    elif volume_ratio >= 1.2:
+    elif volume_ratio >= 0.9:
         volume_signal = "ABOVE"
         volume_emoji = "📊"
     else:
         volume_signal = "WEAK"
         volume_emoji = "⚠️"
-    
+
     return {
         "volume_ratio": volume_ratio,
+        "volume_vs_prev": volume_vs_prev,
         "volume_signal": volume_signal,
         "volume_emoji": volume_emoji,
+        "volume_ok": volume_ok
     }
 
 # =====================================================
@@ -309,9 +316,23 @@ def detect_rsi_divergence(df, window=5):
     return "NO_DIVERGENCE"
 
 # =====================================================
-# АНАЛИЗ ОДНОГО ТАЙМФРЕЙМА
+# АНАЛИЗ ОДНОГО ТАЙМФРЕЙМА (НОВАЯ ВЕРСИЯ)
 # =====================================================
-def analyze_timeframe(df):
+def analyze_timeframe(df, check_ema_cross=False):
+    """
+    Анализирует таймфрейм с новой логикой
+    
+    Args:
+        df: DataFrame с OHLCV
+        check_ema_cross: Если True - проверяем пересечение EMA за последние 5-8 свечей
+    
+    Returns:
+        (side, last, score, details)
+        side: "LONG"/"SHORT"/"NO SIGNAL"
+        last: последние данные
+        score: количество баллов (0-5)
+        details: детали анализа
+    """
     df = df.copy()
     df['EMA20'] = df['close'].ewm(span=20).mean()
     df['EMA50'] = df['close'].ewm(span=50).mean()
@@ -322,51 +343,94 @@ def analyze_timeframe(df):
 
     last = df.iloc[-1]
     prev = df.iloc[-2]
+    
+    details = {
+        'adx': last['ADX'],
+        'ema20': last['EMA20'],
+        'ema50': last['EMA50'],
+        'ema200': last['EMA200'],
+        'atr': last['ATR'],
+        'rsi': last['RSI'],
+        'price': last['close']
+    }
 
-    # ADX фильтр - отсеивает флэтовые сигналы
-    if last['ADX'] < 20:
-        return "NO SIGNAL", last
+    # ===== 1. ADX фильтр (1 балл) =====
+    adx_ok = last['ADX'] >= 20
+    if not adx_ok:
+        details['adx_ok'] = False
 
+    # ===== 2. EMA анализ (1 балл + 1 бонус за пересечение) =====
     ema_diff_pct = abs(last['EMA20'] - last['EMA50']) / last['EMA50'] * 100
-    if ema_diff_pct < 0.3:
-        return "NO SIGNAL", last
+    ema20_above_ema50 = last['EMA20'] > last['EMA50']
+    
+    # Проверяем пересечение EMA за последние 5-8 свечей
+    ema_cross_last_5 = False
+    if check_ema_cross and len(df) >= 8:
+        for i in range(5, 9):
+            if len(df) >= i:
+                prev_ema20 = df['EMA20'].iloc[-i]
+                prev_ema50 = df['EMA50'].iloc[-i]
+                # Было ниже, стало выше - пересечение вверх
+                if prev_ema20 <= prev_ema50 and ema20_above_ema50:
+                    ema_cross_last_5 = True
+                    break
+    
+    ema_ok = ema_diff_pct >= 0.15  # Разница > 0.15%
+    details['ema_diff_pct'] = ema_diff_pct
+    details['ema_cross'] = ema_cross_last_5
 
+    # ===== 3. ATR фильтр (1 балл) =====
     avg_atr = df['ATR'].rolling(20).mean().iloc[-1]
-    if last['ATR'] < avg_atr * 0.8:
-        return "NO SIGNAL", last
+    atr_ok = last['ATR'] >= avg_atr * 0.65  # ATR > 65% от среднего
+    details['atr_ok'] = atr_ok
+    details['atr_ratio'] = last['ATR'] / avg_atr if avg_atr > 0 else 0
 
-    price_move = abs(last['close'] - prev['close'])
-    if price_move > last['ATR'] * 1.5:
-        return "NO SIGNAL", last
+    # ===== 4. Цена vs EMA200 (2 балла) =====
+    price_above_ema200 = last['close'] > last['EMA200']
+    
+    # Проверяем отскок от EMA200 (цена была ниже, коснулась, стала выше)
+    bounce_off_ema200 = False
+    if len(df) >= 3:
+        for i in range(1, 4):
+            prev_close = df['close'].iloc[-i]
+            prev_ema200 = df['EMA200'].iloc[-i]
+            # Была ниже или на уровне, теперь выше
+            if prev_close <= prev_ema200 * 1.002 and price_above_ema200:
+                bounce_off_ema200 = True
+                break
+    
+    ema200_ok = price_above_ema200 or bounce_off_ema200
+    ema200_score = 2 if ema200_ok else 0
+    details['price_above_ema200'] = price_above_ema200
+    details['bounce_off_ema200'] = bounce_off_ema200
 
-    # Проверка наклона EMA20
-    ema20_prev = df['EMA20'].iloc[-2] if len(df) > 1 else last['EMA20']
-    ema20_slope = (last['EMA20'] - ema20_prev) / ema20_prev * 100 if ema20_prev != 0 else 0
-
+    # ===== 5. Структурный анализ =====
     structure = detect_structure(df)
+    details['structure'] = structure
 
-    long_trend = (
-        last['close'] > last['EMA200'] and 
-        last['EMA20'] > last['EMA50'] and
-        ema20_slope > 0  # EMA20 растёт
-    )
-    long_rsi = 50 < last['RSI'] < 70
-    long_structure = structure == "BULLISH_STRUCTURE"
+    # ===== Определяем направление =====
+    long_trend = ema20_above_ema50
+    short_trend = last['EMA20'] < last['EMA50']
 
-    short_trend = (
-        last['close'] < last['EMA200'] and 
-        last['EMA20'] < last['EMA50'] and
-        ema20_slope < 0  # EMA20 падает
-    )
-    short_rsi = 30 < last['RSI'] < 50
-    short_structure = structure == "BEARISH_STRUCTURE"
+    # ===== Подсчет баллов =====
+    score = 0
+    if adx_ok:
+        score += 1
+    if ema_ok or ema_cross_last_5:
+        score += 1
+    if ema_cross_last_5:
+        score += 1  # Бонус за пересечение
+    if atr_ok:
+        score += 1
+    score += ema200_score  # 0 или 2 балла
 
-    if long_trend and long_rsi and long_structure:
-        return "LONG", last
-    elif short_trend and short_rsi and short_structure:
-        return "SHORT", last
+    # ===== Итоговое решение =====
+    if long_trend and score >= 4:
+        return "LONG", last, score, details
+    elif short_trend and score >= 4:
+        return "SHORT", last, score, details
     else:
-        return "NO SIGNAL", last
+        return "NO SIGNAL", last, score, details
 
 # =====================================================
 # КОНТЕКСТ BTC + МАКРО
@@ -463,15 +527,23 @@ def get_macro_bias(macro_context):
     return "NEUTRAL"
 
 # =====================================================
-# АНАЛИЗ МОНЕТЫ
+# АНАЛИЗ МОНЕТЫ (НОВАЯ ВЕРСИЯ С БАЛЛАМИ)
 # =====================================================
 def analyze_symbol(symbol, timeframes, market_context):
     """
-    Анализирует монету с учётом макро контекста
-
-    market_context может быть:
-    - строкой ("TRENDING"/"FLAT") для обратной совместимости
-    - словарём {"btc": "...", "macro": {...}}
+    Анализирует монету с новой системой баллов
+    
+    Балльная система:
+    - 4H и 1H совпадают (направление) = 2 балла
+    - ADX > 20 = 1 балл
+    - EMA20 > EMA50 (или пересечение) = 1 балл (+1 бонус за пересечение)
+    - ATR > 65% от среднего = 1 балл
+    - Объем > 90% среднего = 1 балл
+    - Цена выше EMA200 (или отскок) = 2 балла
+    - 1D подтверждает = +1 бонус
+    
+    Максимум: 8 баллов
+    Минимум для входа: 6 баллов
     """
     # Обрабатываем старый формат (для совместимости)
     if isinstance(market_context, str):
@@ -491,7 +563,7 @@ def analyze_symbol(symbol, timeframes, market_context):
 
         # Получаем макро уклон
         macro_bias = get_macro_bias(macro_context)
-        
+
         results = {}
         for tf in timeframes:
             ohlcv = get_ohlcv_cached(symbol, timeframe=tf, limit=250)
@@ -500,77 +572,134 @@ def analyze_symbol(symbol, timeframes, market_context):
                 return {"side": "NO SIGNAL", "btc_context": btc_context}
 
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            side, last = analyze_timeframe(df)
-            results[tf] = {"side": side, "last": last, "df": df}
+            # Для 4H и 1H проверяем пересечение EMA
+            check_cross = tf in ['4h', '1h']
+            side, last, score, details = analyze_timeframe(df, check_ema_cross=check_cross)
+            results[tf] = {"side": side, "last": last, "score": score, "details": details, "df": df}
 
+        # ===== ГЛАВНОЕ УСЛОВИЕ: 4H и 1H должны совпадать =====
         side_4h = results['4h']['side']
-        last_4h = results['4h']['last']
-        allowed_direction = "LONG" if last_4h['close'] > last_4h['EMA200'] else "SHORT"
-
-        side_1d = results['1d']['side']
         side_1h = results['1h']['side']
+        
+        # Если 4H или 1H не имеют сигнала - нет общего сигнала
+        if side_4h == "NO SIGNAL" or side_1h == "NO SIGNAL":
+            return {"side": "NO SIGNAL", "btc_context": btc_context}
+        
+        # Если 4H и 1H не совпадают - нет сигнала
+        if side_4h != side_1h:
+            return {"side": "NO SIGNAL", "btc_context": btc_context}
+        
+        final_side = side_4h  # Направление по 4H и 1H
+
+        # ===== 1D - не обязателен, но может усилить сигнал =====
+        side_1d = results['1d']['side']
+        day_confirms = 1 if side_1d == final_side else 0
+
+        # ===== 30m и 15m - точка входа =====
         side_30m = results['30m']['side']
         side_15m = results['15m']['side']
-
-        if side_1d == "NO SIGNAL" or side_4h == "NO SIGNAL":
-            return {"side": "NO SIGNAL", "btc_context": btc_context}
-        if side_1d != side_4h:
-            return {"side": "NO SIGNAL", "btc_context": btc_context}
-        if side_1h != side_1d:
-            return {"side": "NO SIGNAL", "btc_context": btc_context}
-
-        junior_confirms = (side_30m == side_1d) or (side_15m == side_1d)
-        if not junior_confirms:
-            return {"side": "NO SIGNAL", "btc_context": btc_context}
-
-        final_side = side_1d
-
-        if final_side != allowed_direction:
+        
+        # Логика: 30m совпадает ИЛИ 15m совпадает ИЛИ (30m нейтрально но 15m дает импульс)
+        entry_confirms = False
+        if side_30m == final_side:
+            entry_confirms = True  # 30m подтверждает
+        elif side_15m == final_side:
+            entry_confirms = True  # 15m подтверждает
+        elif side_30m == "NO SIGNAL" and side_15m != "NO SIGNAL":
+            # 30m нейтрально, но 15m дает импульс в любом направлении
+            if side_15m == final_side:
+                entry_confirms = True
+        
+        if not entry_confirms:
             return {"side": "NO SIGNAL", "btc_context": btc_context}
 
-        # Проверка макро уклона — блокируем сигналы против макро
+        # ===== Проверка направления по EMA200 на 4H =====
+        last_4h = results['4h']['last']
+        details_4h = results['4h']['details']
+        
+        # Цена выше EMA200 ИЛИ был отскок
+        price_above_ema200 = details_4h.get('price_above_ema200', False)
+        bounce_off_ema200 = details_4h.get('bounce_off_ema200', False)
+        
+        if not (price_above_ema200 or bounce_off_ema200):
+            return {"side": "NO SIGNAL", "btc_context": btc_context}
+
+        # ===== Проверка макро уклона =====
         if macro_bias != "NEUTRAL" and final_side != macro_bias:
             logger.info(f"🚫 {symbol}: БЛОК макро (signal={final_side}, macro_bias={macro_bias})")
             return {"side": "NO SIGNAL", "btc_context": btc_context}
 
-        # Проверка BTC направления — блокируем сигналы против BTC (кроме FLAT)
+        # ===== Проверка BTC направления =====
         if btc_bias != "NEUTRAL" and final_side != btc_bias:
             logger.info(f"🚫 {symbol}: БЛОК BTC (signal={final_side}, btc_bias={btc_bias})")
             return {"side": "NO SIGNAL", "btc_context": btc_context}
 
+        # ===== Объём =====
         df_1h = results['1h']['df']
         volume_data = analyze_volume(df_1h)
+        
+        if not volume_data['volume_ok']:
+            return {"side": "NO SIGNAL", "btc_context": btc_context}
 
-        # Ужесточаем фильтр объёма при FLAT BTC
-        if flat_mode:
-            if volume_data['volume_signal'] not in ["STRONG", "ABOVE"] or volume_data['volume_ratio'] < 1.5:
-                return {"side": "NO SIGNAL", "btc_context": btc_context}
-        else:
-            if volume_data['volume_signal'] == "WEAK":
-                return {"side": "NO SIGNAL", "btc_context": btc_context}
-
+        # ===== Свечные паттерны (только сильное поглощение против) =====
         df_15m = results['15m']['df']
         patterns, pattern_signal = detect_candle_patterns(df_15m)
+        
         if final_side == "LONG" and pattern_signal == "BEARISH":
             return {"side": "NO SIGNAL", "btc_context": btc_context}
         if final_side == "SHORT" and pattern_signal == "BULLISH":
             return {"side": "NO SIGNAL", "btc_context": btc_context}
 
-        # Проверка дивергенций RSI
-        df_1h = results['1h']['df']
-        divergence = detect_rsi_divergence(df_1h, window=5)
+        # ===== FLAT BTC режим - альт должен иметь ADX > 23 =====
+        if flat_mode and symbol != "BTC/USDT":
+            adx_1h = results['1h']['details'].get('adx', 0)
+            if adx_1h < 23:
+                logger.info(f"🚫 {symbol}: FLAT BTC + ADX={adx_1h:.1f} < 23")
+                return {"side": "NO SIGNAL", "btc_context": btc_context}
 
-        # Дивергенция подтверждает сигнал - повышаем уверенность
+        # ===== Подсчет общих баллов =====
+        total_score = 0
+        
+        # 4H и 1H совпадают = 2 балла
+        total_score += 2
+        
+        # ADX > 20 на 1H = 1 балл
+        if results['1h']['details'].get('adx', 0) >= 20:
+            total_score += 1
+        
+        # EMA20 > EMA50 на 1H = 1 балл
+        if results['1h']['details'].get('ema_diff_pct', 0) >= 0.15:
+            total_score += 1
+        elif results['1h']['details'].get('ema_cross', False):
+            total_score += 2  # Бонус за пересечение
+        
+        # ATR > 65% на 1H = 1 балл
+        if results['1h']['details'].get('atr_ratio', 0) >= 0.65:
+            total_score += 1
+        
+        # Объем > 90% = 1 балл
+        if volume_data.get('volume_ratio', 0) >= 0.9:
+            total_score += 1
+        
+        # Цена выше EMA200 на 4H = 2 балла
+        if price_above_ema200 or bounce_off_ema200:
+            total_score += 2
+        
+        # 1D подтверждает = +1 бонус
+        total_score += day_confirms
+
+        # ===== Минимальный порог для сигнала =====
+        if total_score < 6:
+            logger.debug(f"{symbol}: Недостаточно баллов ({total_score}/6)")
+            return {"side": "NO SIGNAL", "btc_context": btc_context}
+
+        # ===== Дивергенции RSI (опционально) =====
+        divergence = detect_rsi_divergence(df_1h, window=5)
         divergence_confirms = False
         if final_side == "LONG" and divergence == "BULLISH_DIVERGENCE":
             divergence_confirms = True
         if final_side == "SHORT" and divergence == "BEARISH_DIVERGENCE":
             divergence_confirms = True
-
-        # При FLAT BTC требуем подтверждение дивергенцией
-        if flat_mode and not divergence_confirms:
-            logger.info(f"🚫 {symbol}: FLAT BTC без дивергенции")
-            return {"side": "NO SIGNAL", "btc_context": btc_context}
 
         supports, resistances = find_support_resistance(df_1h)
         liq_above, liq_below = find_liquidity_levels(df_1h)
@@ -578,7 +707,7 @@ def analyze_symbol(symbol, timeframes, market_context):
         last_1h = results['1h']['last']
         trade_plan = build_advanced_trade_plan(last_1h['close'], last_1h['ATR'], final_side)
 
-        # Формируем базовый сигнал
+        # Формируем сигнал
         signal = {
             "symbol": symbol,
             "side": final_side,
@@ -603,10 +732,10 @@ def analyze_symbol(symbol, timeframes, market_context):
             "liq_below": liq_below,
             "divergence": divergence,
             "divergence_confirms": divergence_confirms,
+            "score": total_score,  # Добавляем счет
             **trade_plan
         }
-        
-        # Добавляем макро данные если есть
+
         if macro_context:
             signal["macro"] = macro_context
 
@@ -749,8 +878,11 @@ def format_signal(signal_data):
     }
 
     # Формируем сообщение
+    score = signal_data.get("score", 0)
+    
     message = f"""
 {side_emoji} *{symbol}* - {side}
+⭐ *Баллы:* {score}/8
 
 💰 *Цена:* ${price:.2f}
 📊 *RSI:* {rsi:.1f} | *ADX:* {adx:.1f}

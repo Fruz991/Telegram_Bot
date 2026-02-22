@@ -159,6 +159,8 @@ async def send_signal(message: types.Message):
             
             signal_cooldown[symbol] = now
             update_last_signal(symbol, signal['side'])
+            score = signal.get('score', 0)
+            logger.info(f"✅ СИГНАЛ: {symbol} {signal['side']} | Баллы: {score}/8")
             await message.reply(format_signal(signal))
             return
 
@@ -218,6 +220,8 @@ async def send_best_signal(callback: types.CallbackQuery):
             
             signal_cooldown[symbol] = now
             update_last_signal(symbol, signal['side'])
+            score = signal.get('score', 0)
+            logger.info(f"✅ СИГНАЛ: {symbol} {signal['side']} | Баллы: {score}/8")
             await callback.message.answer(format_signal(signal))
             return
 
@@ -310,7 +314,10 @@ async def auto_scan():
                     pending_signal["signal"] = signal
                     symbol_fmt = signal['symbol'].replace('/', '')
                     side = signal['side']
+                    score = signal.get('score', 0)
                     emoji = "📈" if side == "LONG" else "📉"
+                    
+                    logger.info(f"✅ СИГНАЛ: {symbol_fmt} {side} | Баллы: {score}/8")
 
                     await bot.send_message(
                         OWNER_ID,
