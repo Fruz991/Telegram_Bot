@@ -291,7 +291,7 @@ async def auto_scan():
             market_context = await get_market_context_cached()
 
             btc_context = market_context["btc"]
-            logger.info(f"BTC контекст: {btc_context}")
+            logger.info(f"BTC: {btc_context} | SPX: {market_context['macro']['spx'].get('trend', 'N/A')} | DXY: {market_context['macro']['dxy'].get('trend', 'N/A')}")
 
             for symbol in SYMBOLS:
                 if symbol in signal_cooldown:

@@ -119,7 +119,6 @@ class MacroTracker:
                 self.cache["spx"]["error_count"] = 0  # Сброс после паузы
         
         if cache_age < self.cache_duration:
-            logger.debug(f"SPX: возвращаем кэш (возраст {cache_age:.0f} сек, значение {self.cache['spx']['value']})")
             return self.cache["spx"]
 
         logger.info("SPX: обновляем данные...")
@@ -127,10 +126,8 @@ class MacroTracker:
         if df is None or len(df) == 0:
             self.cache["spx"]["error_count"] += 1
             logger.warning(f"SPX: не удалось получить данные (ошибок: {self.cache['spx']['error_count']}/{self.max_retries})")
-            # Возвращаем последние известные данные если есть
             if self.cache["spx"]["value"] is not None:
-                logger.info(f"SPX: используем последнее значение {self.cache['spx']['value']}")
-                self.cache["spx"]["timestamp"] = now  # Продлеваем кэш
+                self.cache["spx"]["timestamp"] = now
                 return self.cache["spx"]
             return {"value": None, "trend": "ERROR", "change": 0, "error_count": self.cache["spx"]["error_count"]}
 
@@ -165,7 +162,6 @@ class MacroTracker:
                 self.cache["dxy"]["error_count"] = 0  # Сброс после паузы
         
         if cache_age < self.cache_duration:
-            logger.debug(f"DXY: возвращаем кэш (возраст {cache_age:.0f} сек, значение {self.cache['dxy']['value']})")
             return self.cache["dxy"]
 
         logger.info("DXY: обновляем данные...")
@@ -173,10 +169,8 @@ class MacroTracker:
         if df is None or len(df) == 0:
             self.cache["dxy"]["error_count"] += 1
             logger.warning(f"DXY: не удалось получить данные (ошибок: {self.cache['dxy']['error_count']}/{self.max_retries})")
-            # Возвращаем последние известные данные если есть
             if self.cache["dxy"]["value"] is not None:
-                logger.info(f"DXY: используем последнее значение {self.cache['dxy']['value']}")
-                self.cache["dxy"]["timestamp"] = now  # Продлеваем кэш
+                self.cache["dxy"]["timestamp"] = now
                 return self.cache["dxy"]
             return {"value": None, "trend": "ERROR", "change": 0, "error_count": self.cache["dxy"]["error_count"]}
 
@@ -214,8 +208,6 @@ class MacroTracker:
         spx = self.get_spx_cached()
         dxy = self.get_dxy_cached()
         crypto_impact = self.get_crypto_impact(spx, dxy)
-        
-        logger.info(f"Макро: SPX {spx.get('value', 'N/A'):.2f} ({spx.get('trend', 'N/A')}), DXY {dxy.get('value', 'N/A'):.2f} ({dxy.get('trend', 'N/A')})")
 
         return {
             "spx": spx,
