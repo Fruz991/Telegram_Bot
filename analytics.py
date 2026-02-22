@@ -11,7 +11,6 @@ import ta
 import pytz
 from datetime import datetime, timezone, timedelta
 from config import TIMEFRAMES
-from macro_tracker import macro_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -420,8 +419,9 @@ async def get_btc_context_cached():
 async def get_market_context_cached():
     """Возвращает полный контекст: BTC + Макро (DXY + SPX)"""
     btc_context = await get_btc_context_cached()
-    macro_context = macro_tracker.get_market_context()
-    
+    # Макро отключено временно
+    macro_context = None
+
     return {
         "btc": btc_context,
         "macro": macro_context
@@ -610,7 +610,6 @@ def analyze_symbol(symbol, timeframes, market_context):
         if macro_context:
             signal["macro"] = macro_context
 
-        logger.info(f"✅ СИГНАЛ: {symbol} {final_side} | BTC={btc_context} | ADX={last_1h['ADX']:.1f} | RSI={last_1h['RSI']:.1f}")
         return signal
 
     except Exception as e:

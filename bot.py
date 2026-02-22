@@ -160,7 +160,6 @@ async def send_signal(message: types.Message):
             signal_cooldown[symbol] = now
             update_last_signal(symbol, signal['side'])
             await message.reply(format_signal(signal))
-            logger.info(f"Сигнал найден: {symbol} {signal['side']}")
             return
 
     await message.reply("⏳ Сигналов сейчас нет. Бот продолжает мониторинг 24/7.")
@@ -220,7 +219,6 @@ async def send_best_signal(callback: types.CallbackQuery):
             signal_cooldown[symbol] = now
             update_last_signal(symbol, signal['side'])
             await callback.message.answer(format_signal(signal))
-            logger.info(f"Сигнал найден через callback: {symbol}")
             return
 
     await callback.message.answer("⏳ Сейчас нет сильных сигналов. Бот продолжает мониторинг 24/7.")
@@ -291,7 +289,7 @@ async def auto_scan():
             market_context = await get_market_context_cached()
 
             btc_context = market_context["btc"]
-            logger.info(f"BTC: {btc_context} | SPX: {market_context['macro']['spx'].get('trend', 'N/A')} | DXY: {market_context['macro']['dxy'].get('trend', 'N/A')}")
+            logger.info(f"BTC: {btc_context}")
 
             for symbol in SYMBOLS:
                 if symbol in signal_cooldown:
@@ -323,11 +321,12 @@ async def auto_scan():
                         reply_markup=alert_keyboard()
                     )
                     signals_found += 1
-                    logger.info(f"Сигнал найден: {symbol_fmt} {side}")
                     await asyncio.sleep(5)
 
             if signals_found == 0:
-                logger.debug("Сигналов не найдено в этом цикле")
+                pass
+            else:
+                logger.info(f"✅ Найдено сигналов: {signals_found}")
 
             await asyncio.sleep(SCAN_INTERVAL_SECONDS)
 
