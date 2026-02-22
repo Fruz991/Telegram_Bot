@@ -17,7 +17,7 @@ from analytics import analyze_all_timeframes_async, format_signal, get_market_co
 # ЛОГИРОВАНИЕ
 # =====================================================
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # DEBUG чтобы видеть причины блокировки сигналов
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('bot.log', encoding='utf-8'),

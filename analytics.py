@@ -326,18 +326,22 @@ def analyze_timeframe(df):
 
     # ADX фильтр - отсеивает флэтовые сигналы
     if last['ADX'] < 20:
+        logger.debug(f"ADX фильтр: ADX={last['ADX']:.2f} < 20 (флэт)")
         return "NO SIGNAL", last
 
     ema_diff_pct = abs(last['EMA20'] - last['EMA50']) / last['EMA50'] * 100
     if ema_diff_pct < 0.3:
+        logger.debug(f"EMA фильтр: разница={ema_diff_pct:.3f}% < 0.3%")
         return "NO SIGNAL", last
 
     avg_atr = df['ATR'].rolling(20).mean().iloc[-1]
     if last['ATR'] < avg_atr * 0.8:
+        logger.debug(f"ATR фильтр: ATR={last['ATR']:.2f} < {avg_atr * 0.8:.2f} (низкая волатильность)")
         return "NO SIGNAL", last
 
     price_move = abs(last['close'] - prev['close'])
     if price_move > last['ATR'] * 1.5:
+        logger.debug(f"Price move фильтр: движение={price_move:.2f} > {last['ATR'] * 1.5:.2f} (резкий скачок)")
         return "NO SIGNAL", last
 
     # Проверка наклона EMA20
@@ -514,63 +518,72 @@ def analyze_symbol(symbol, timeframes, market_context):
         side_15m = results['15m']['side']
 
         if side_1d == "NO SIGNAL" or side_4h == "NO SIGNAL":
+            logger.debug(f"{symbol}: 1D/4H NO SIGNAL")
             return {"side": "NO SIGNAL", "btc_context": btc_context}
         if side_1d != side_4h:
+            logger.debug(f"{symbol}: 1D ({side_1d}) != 4H ({side_4h})")
             return {"side": "NO SIGNAL", "btc_context": btc_context}
         if side_1h != side_1d:
+            logger.debug(f"{symbol}: 1H ({side_1h}) != 1D ({side_1d})")
             return {"side": "NO SIGNAL", "btc_context": btc_context}
 
         junior_confirms = (side_30m == side_1d) or (side_15m == side_1d)
         if not junior_confirms:
+            logger.debug(f"{symbol}: Младшие TF не подтверждают (30m={side_30m}, 15m={side_15m})")
             return {"side": "NO SIGNAL", "btc_context": btc_context}
 
         final_side = side_1d
 
         if final_side != allowed_direction:
+            logger.debug(f"{symbol}: Сигнал против направления 4H (allowed={allowed_direction})")
             return {"side": "NO SIGNAL", "btc_context": btc_context}
-        
+
         # Проверка макро уклона — блокируем сигналы против макро
         if macro_bias != "NEUTRAL" and final_side != macro_bias:
-            logger.debug(f"{symbol}: Сигнал против макро уклона ({macro_bias}), пропуск")
+            logger.info(f"{symbol}: БЛОК макро: signal={final_side}, macro_bias={macro_bias}")
             return {"side": "NO SIGNAL", "btc_context": btc_context}
-        
+
         # Проверка BTC направления — блокируем сигналы против BTC (кроме FLAT)
         if btc_bias != "NEUTRAL" and final_side != btc_bias:
-            logger.debug(f"{symbol}: Сигнал против BTC ({btc_bias}), пропуск")
+            logger.info(f"{symbol}: БЛОК BTC: signal={final_side}, btc_bias={btc_bias}")
             return {"side": "NO SIGNAL", "btc_context": btc_context}
 
         df_1h = results['1h']['df']
         volume_data = analyze_volume(df_1h)
-        
+
         # Ужесточаем фильтр объёма при FLAT BTC
         if flat_mode:
             if volume_data['volume_signal'] not in ["STRONG", "ABOVE"] or volume_data['volume_ratio'] < 1.5:
+                logger.debug(f"{symbol}: FLAT BTC + слабый объём (ratio={volume_data['volume_ratio']:.2f})")
                 return {"side": "NO SIGNAL", "btc_context": btc_context}
         else:
             if volume_data['volume_signal'] == "WEAK":
+                logger.debug(f"{symbol}: Объём WEAK (ratio={volume_data['volume_ratio']:.2f})")
                 return {"side": "NO SIGNAL", "btc_context": btc_context}
 
         df_15m = results['15m']['df']
         patterns, pattern_signal = detect_candle_patterns(df_15m)
         if final_side == "LONG" and pattern_signal == "BEARISH":
+            logger.debug(f"{symbol}: Паттерны против LONG: {patterns}")
             return {"side": "NO SIGNAL", "btc_context": btc_context}
         if final_side == "SHORT" and pattern_signal == "BULLISH":
+            logger.debug(f"{symbol}: Паттерны против SHORT: {patterns}")
             return {"side": "NO SIGNAL", "btc_context": btc_context}
 
         # Проверка дивергенций RSI
         df_1h = results['1h']['df']
         divergence = detect_rsi_divergence(df_1h, window=5)
-        
+
         # Дивергенция подтверждает сигнал - повышаем уверенность
         divergence_confirms = False
         if final_side == "LONG" and divergence == "BULLISH_DIVERGENCE":
             divergence_confirms = True
         if final_side == "SHORT" and divergence == "BEARISH_DIVERGENCE":
             divergence_confirms = True
-        
+
         # При FLAT BTC требуем подтверждение дивергенцией
         if flat_mode and not divergence_confirms:
-            logger.debug(f"{symbol}: FLAT режим, дивергенция не подтверждает")
+            logger.info(f"{symbol}: FLAT BTC без дивергенции (divergence={divergence})")
             return {"side": "NO SIGNAL", "btc_context": btc_context}
 
         supports, resistances = find_support_resistance(df_1h)
@@ -610,7 +623,8 @@ def analyze_symbol(symbol, timeframes, market_context):
         # Добавляем макро данные если есть
         if macro_context:
             signal["macro"] = macro_context
-        
+
+        logger.info(f"✅ СИГНАЛ: {symbol} {final_side} | BTC={btc_context} | ADX={last_1h['ADX']:.1f} | RSI={last_1h['RSI']:.1f}")
         return signal
 
     except Exception as e:
