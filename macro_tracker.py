@@ -23,7 +23,7 @@ class MacroTracker:
             "spx": {"value": None, "trend": "FLAT", "timestamp": 0, "error_count": 0},
             "dxy": {"value": None, "trend": "FLAT", "timestamp": 0, "error_count": 0},
         }
-        self.cache_duration = 1800  # 30 минут (для экономии лимита 800 запросов/день)
+        self.cache_duration = 300  # 5 минут (было 30 мин — данные не обновлялись)
         self.max_retries = 3  # Максимум ошибок перед паузой
     
     def get_time_series(self, symbol, interval="1h", outputsize=50):
@@ -62,9 +62,13 @@ class MacroTracker:
             
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 429:
-                logger.warning("Превышен лимит запросов Twelve Data")
+                logger.warning("Превышен лимит запросов Twelve Data (429)")
+            elif e.response.status_code == 404:
+                logger.error(f"Символ не найден (404): {symbol}")
+            elif e.response.status_code == 401:
+                logger.error(f"Неверный API ключ (401)")
             else:
-                logger.error(f"HTTP ошибка {symbol}: {e}")
+                logger.error(f"HTTP ошибка {symbol}: {e.response.status_code} - {e}")
             return None
         except Exception as e:
             logger.error(f"Ошибка получения {symbol}: {e}")
@@ -115,14 +119,19 @@ class MacroTracker:
                 self.cache["spx"]["error_count"] = 0  # Сброс после паузы
         
         if cache_age < self.cache_duration:
-            logger.debug(f"SPX: возвращаем кэш (возраст {cache_age:.0f} сек)")
+            logger.debug(f"SPX: возвращаем кэш (возраст {cache_age:.0f} сек, значение {self.cache['spx']['value']})")
             return self.cache["spx"]
 
         logger.info("SPX: обновляем данные...")
         df = self.get_spx_data()
         if df is None or len(df) == 0:
             self.cache["spx"]["error_count"] += 1
-            logger.warning(f"SPX: не удалось получить данные (ошибок: {self.cache['spx']['error_count']})")
+            logger.warning(f"SPX: не удалось получить данные (ошибок: {self.cache['spx']['error_count']}/{self.max_retries})")
+            # Возвращаем последние известные данные если есть
+            if self.cache["spx"]["value"] is not None:
+                logger.info(f"SPX: используем последнее значение {self.cache['spx']['value']}")
+                self.cache["spx"]["timestamp"] = now  # Продлеваем кэш
+                return self.cache["spx"]
             return {"value": None, "trend": "ERROR", "change": 0, "error_count": self.cache["spx"]["error_count"]}
 
         trend = self.analyze_trend(df)
@@ -156,14 +165,19 @@ class MacroTracker:
                 self.cache["dxy"]["error_count"] = 0  # Сброс после паузы
         
         if cache_age < self.cache_duration:
-            logger.debug(f"DXY: возвращаем кэш (возраст {cache_age:.0f} сек)")
+            logger.debug(f"DXY: возвращаем кэш (возраст {cache_age:.0f} сек, значение {self.cache['dxy']['value']})")
             return self.cache["dxy"]
 
         logger.info("DXY: обновляем данные...")
         df = self.get_dxy_data()
         if df is None or len(df) == 0:
             self.cache["dxy"]["error_count"] += 1
-            logger.warning(f"DXY: не удалось получить данные (ошибок: {self.cache['dxy']['error_count']})")
+            logger.warning(f"DXY: не удалось получить данные (ошибок: {self.cache['dxy']['error_count']}/{self.max_retries})")
+            # Возвращаем последние известные данные если есть
+            if self.cache["dxy"]["value"] is not None:
+                logger.info(f"DXY: используем последнее значение {self.cache['dxy']['value']}")
+                self.cache["dxy"]["timestamp"] = now  # Продлеваем кэш
+                return self.cache["dxy"]
             return {"value": None, "trend": "ERROR", "change": 0, "error_count": self.cache["dxy"]["error_count"]}
 
         trend = self.analyze_trend(df)
