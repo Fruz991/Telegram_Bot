@@ -17,13 +17,18 @@ from analytics import analyze_all_timeframes_async, format_signal, get_market_co
 # ЛОГИРОВАНИЕ
 # =====================================================
 logging.basicConfig(
-    level=logging.DEBUG,  # DEBUG чтобы видеть причины блокировки сигналов
+    level=logging.INFO,  # INFO — тільки важливі повідомлення
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('bot.log', encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
+
+# Вимикаємо DEBUG для HTTP-запитів (щоб не спамило)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+logging.getLogger('ccxt').setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 # =====================================================

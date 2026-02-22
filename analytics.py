@@ -478,6 +478,8 @@ def analyze_symbol(symbol, timeframes, market_context):
     - строкой ("TRENDING"/"FLAT") для обратной совместимости
     - словарём {"btc": "...", "macro": {...}}
     """
+    logger.info(f"🔍 Анализ {symbol}...")
+    
     # Обрабатываем старый формат (для совместимости)
     if isinstance(market_context, str):
         btc_context = market_context
@@ -485,6 +487,8 @@ def analyze_symbol(symbol, timeframes, market_context):
     else:
         btc_context = market_context.get("btc", "TRENDING")
         macro_context = market_context.get("macro", None)
+
+    logger.info(f"  BTC контекст: {btc_context}, Макро: {'есть' if macro_context else 'нет'}")
 
     try:
         if symbol == "BTC/USDT":
